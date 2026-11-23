@@ -427,3 +427,26 @@ func TestPortInUse(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Browsers and HTTP clients open spare connections that never send a request;
+// http.Server.Shutdown waits up to 5s for those. Stop must not.
+func TestStopWithIdleUnusedConnections(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0})
+	h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "notes.md")}, nil)
+	ctlIdle, err := net.Dial("unix", h.dirs.Socket())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctlIdle.Close()
+	lanIdle, err := net.Dial("tcp", h.d.HTTPAddr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lanIdle.Close()
+	time.Sleep(50 * time.Millisecond)
+	h.call(t, "POST", "/stop", nil, nil)
+	if err := h.waitExit(t, time.Second); err != nil {
+		t.Fatal(err)
+	}
+}

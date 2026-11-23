@@ -24,6 +24,7 @@ const (
 	NetPollInterval = 5 * time.Second
 	IdleGrace       = 1 * time.Second
 	reloadDebounce  = 100 * time.Millisecond
+	shutdownGrace   = 300 * time.Millisecond
 )
 
 // Daemon is the background server: LAN HTTP + control socket.
@@ -203,12 +204,23 @@ loop:
 		}
 	}
 
-	// Tell open pages first (SSE "gone"), then shut down.
+	// Tell open pages first (SSE "gone"), give in-flight responses a moment,
+	// then close. Shutdown alone would wait up to 5s for connections that
+	// clients opened speculatively and never used.
 	d.hub.Close()
-	shCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	shCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
-	ctlSrv.Shutdown(shCtx)
-	lanSrv.Shutdown(shCtx)
+	var wg sync.WaitGroup
+	for _, srv := range []*http.Server{ctlSrv, lanSrv} {
+		wg.Add(1)
+		go func(srv *http.Server) {
+			defer wg.Done()
+			if srv.Shutdown(shCtx) != nil {
+				srv.Close()
+			}
+		}(srv)
+	}
+	wg.Wait()
 	os.Remove(d.dirs.Socket())
 	d.logf("stopped")
 	return nil
