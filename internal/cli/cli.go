@@ -321,6 +321,3 @@ func (c *cmd) stop() error {
 	fmt.Fprintln(c.out, "airs stopped (your list is kept for next time)")
 	return nil
 }
-
-// send is implemented in send.go (Task 11).
-func (c *cmd) send(q string) error { return errors.New("send is not implemented yet") }
