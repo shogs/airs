@@ -24,6 +24,7 @@ go install ./cmd/airs
 | Command | What it does |
 |---|---|
 | `airs <file\|folder> [--any]` | Share a markdown file or a folder. Prints the link and a QR code. |
+| `airs add <file\|folder> [--any]` | Same as above, spelled out. Use it, or `./`, for a file whose name matches a command (`airs add list`). |
 | `airs list` | Show what's shared, with ids, links and status. |
 | `airs remove <id\|name>` | Stop sharing. Takes an id, a name (`notes.md`, `docs`), or a path. |
 | `airs qr [id\|name]` | Print a QR code. With no argument it prints the code for the index page. |
@@ -68,9 +69,33 @@ any_network = false  # true = share on every network
 | `~/.local/state/airs/airs.log` | Server log |
 | `~/.local/state/airs/airs.sock` | Control socket (JSON over HTTP), also meant for a future menu bar app |
 
+## Known issues
+
+- **Name vs. local file:** `airs remove notes.md` fails if a *different* `notes.md` is in the
+  current folder, because a path is matched before a name. `qr` and `send` have the same issue.
+  Use the id instead.
+- **Colons:** listing links break for file names containing `:`.
+- **No reconnect after stop:** open pages show "No longer shared" after `airs stop` and don't
+  resume when the server starts again. Reload the page.
+- **Restart timing:** a link printed at the exact moment the idle server shuts down only works after the next `airs` command.
+- **Failed saves:** if saving the list fails, the running server and `state.json` can disagree.
+  If removing fails, open pages aren't told the item is gone.
+- **Folder refreshes:** a change anywhere in a shared folder refreshes every open page from that
+  folder, which closes any open `<details>` sections.
+- **Raw HTML images:** `<img src="x.png">` written as raw HTML in a single shared file doesn't
+  load. Markdown image syntax works.
+- **Refresh order:** two quick refreshes aren't ordered, so a slow older one can overwrite a
+  newer one.
+- **Many tabs:** each tab holds one live-update connection, so six or more airs tabs in one
+  desktop browser can stall.
+- **`untrust` message:** `airs untrust` reports success even when the network wasn't trusted.
+
 ## Development
 
 ```
 go test ./...          # includes an end-to-end test that builds and runs the binary
 go test -short ./...   # skips the end-to-end test
 ```
+
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for how airs works inside, security notes, and manual
+checks on real devices.
