@@ -29,6 +29,7 @@ type httpServer struct {
 	cfg   config.Config
 	ns    *NetState
 	hub   *watch.Hub
+	notes notes.Writer
 }
 
 // NewHTTP returns the LAN handler.
@@ -43,6 +44,7 @@ func NewHTTP(store *state.Store, cfg config.Config, ns *NetState, hub *watch.Hub
 	mux.HandleFunc("GET /{slug}", s.item)
 	mux.HandleFunc("GET /{slug}/{rel...}", s.itemPath)
 	s.routesLive(mux)
+	s.routesNotes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !hostAllowed(r.Host) {
 			http.Error(w, "airs: unexpected Host header", http.StatusForbidden)
