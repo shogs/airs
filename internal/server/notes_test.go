@@ -217,3 +217,35 @@ func TestPutNote(t *testing.T) {
 		t.Fatal("untrusted PUT", code)
 	}
 }
+
+func TestPostNoteSymlinkedNotesFile(t *testing.T) {
+	f := newFixture(t)
+	target := filepath.Join(t.TempDir(), "authorized_keys")
+	os.WriteFile(target, []byte("keep\n"), 0o600)
+	os.Symlink(target, filepath.Join(f.dir, "docs", "a.notes.md"))
+	if code, _ := f.send(t, "POST", notesURL(t, f, "docs", "a.md"), remote, goodNote, nil); code < 400 {
+		t.Fatal("wrote through a symlinked notes file", code)
+	}
+	if fileText(t, target) != "keep\n" {
+		t.Fatal("target changed")
+	}
+}
+
+func TestNotesOfSymlinkedDocInFolder(t *testing.T) {
+	f := newFixture(t)
+	link := filepath.Join(f.dir, "docs", "link.md")
+	if err := os.Symlink(filepath.Join(f.dir, "docs", "sub", "b.md"), link); err != nil {
+		t.Fatal(err)
+	}
+	if code, m := f.send(t, "POST", notesURL(t, f, "docs", "link.md"), remote, goodNote, nil); code != 201 {
+		t.Fatal(code, m)
+	}
+	if _, m := f.renderVia(t, "docs", "link.md", remote); len(noteTexts(m)) != 1 {
+		t.Fatalf("note vanished: %v", m["notes"])
+	}
+	os.WriteFile(filepath.Join(f.dir, "docs", "y.notes.md"), []byte("# n\n"), 0o644)
+	os.Symlink(filepath.Join(f.dir, "docs", "y.notes.md"), filepath.Join(f.dir, "docs", "x.md"))
+	if _, m := f.renderVia(t, "docs", "x.md", remote); m["notesEnabled"] != false {
+		t.Fatalf("link to a notes file offers notes: %v", m)
+	}
+}

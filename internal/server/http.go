@@ -325,8 +325,13 @@ func (s *httpServer) renderDoc(r *http.Request, it state.Item, rel string) (rend
 		title = filepath.Base(abs)
 	}
 	doc := renderedDoc{HTML: d.HTML, Title: title, Markdown: string(src), Notes: []notes.Note{}}
-	if s.notesOn(it, abs) {
-		ns, err := notes.Read(abs)
+	// Notes live beside the resolved document, as on the write side.
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		real = abs
+	}
+	if s.notesOn(it, abs) && s.notesOn(it, real) {
+		ns, err := notes.Read(real)
 		if err != nil {
 			log.Printf("notes for %s: %v", abs, err)
 		}

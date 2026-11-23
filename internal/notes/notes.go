@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -169,7 +170,31 @@ func parseBody(lines []string) (quote, text string, header int) {
 	if q == nil {
 		i = save
 	}
-	return strings.TrimSpace(strings.Join(q, "\n")), strings.TrimSpace(strings.Join(lines[i:], "\n")), header
+	text = strings.TrimSpace(strings.Join(lines[i:], "\n"))
+	if strings.HasPrefix(text, `\>`) { // see escapeText
+		text = text[1:]
+	}
+	return strings.TrimSpace(strings.Join(q, "\n")), text, header
+}
+
+// escapeText keeps note text that starts with ">" from reading back as a quote.
+func escapeText(s string) string {
+	if strings.HasPrefix(s, ">") {
+		return `\` + s
+	}
+	return s
+}
+
+// ErrNotRegular is returned when a notes file is a symlink or other non-file:
+// airs never writes through it.
+var ErrNotRegular = errors.New("notes file is not a regular file")
+
+func checkRegular(p string) error {
+	fi, err := os.Lstat(p)
+	if err == nil && !fi.Mode().IsRegular() {
+		return ErrNotRegular
+	}
+	return nil
 }
 
 func normalize(s string) string {
@@ -250,12 +275,15 @@ func (w *Writer) Append(doc string, in Input, now time.Time) (Note, error) {
 		}
 	}
 	if in.Text != "" {
-		b.WriteString(in.Text + "\n")
+		b.WriteString(escapeText(in.Text) + "\n")
 	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	f, err := os.OpenFile(Path(doc), os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o644)
+	if err := checkRegular(Path(doc)); err != nil {
+		return Note{}, err
+	}
+	f, err := os.OpenFile(Path(doc), os.O_RDWR|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		return Note{}, err
 	}
@@ -297,6 +325,9 @@ func (w *Writer) Edit(doc, id, was, text string, now time.Time) (Note, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	p := Path(doc)
+	if err := checkRegular(p); err != nil {
+		return Note{}, err
+	}
 	src, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return Note{}, ErrNotFound
@@ -356,7 +387,7 @@ func (w *Writer) Edit(doc, id, was, text string, now time.Time) (Note, error) {
 		if hdr != "" {
 			b.WriteString("\n")
 		}
-		b.WriteString(text + "\n")
+		b.WriteString(escapeText(text) + "\n")
 	}
 	if end < len(src) {
 		b.WriteString("\n")

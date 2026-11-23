@@ -68,8 +68,13 @@
   }
 
   // Refresh the content from the server; failures leave the page as it is.
+  // While the reader is typing a note, the refresh waits: replacing the page
+  // would close the iPad keyboard mid-sentence.
+  var refreshPending = false;
   function refresh() {
     if (doc.kind === "listing") return refreshListing();
+    if (notes.typing()) { refreshPending = true; return; }
+    refreshPending = false;
     fetch(renderURL, { cache: "no-store" }).then(function (r) {
       if (r.status === 410) return stop();
       if (r.status === 404) return showBanner("missing");
@@ -142,7 +147,7 @@
   // --- notes ---
 
   var notes = (function () {
-    var noop = { update: function () {}, beforeReplace: function () {}, afterReplace: function () {} };
+    var noop = { update: function () {}, beforeReplace: function () {}, afterReplace: function () {}, typing: function () { return false; } };
     var article = document.getElementById("airs-article");
     if (doc.kind !== "doc" || !article) return noop;
 
@@ -308,8 +313,11 @@
       b.el.appendChild(actions);
       cancel.addEventListener("click", closeBox);
       b.save.addEventListener("click", save);
+      b.ta.addEventListener("blur", function () {
+        if (refreshPending) setTimeout(refresh, 0);
+      });
       b.ta.addEventListener("keydown", function (e) {
-        if (e.key === "Escape") closeBox();
+        if (e.key === "Escape" && !dirty()) closeBox();
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save();
       });
       return b;
@@ -339,11 +347,15 @@
       for (var i = 0; i < hidden.length; i++) hidden[i].hidden = false;
     }
 
-    // A box holding unsaved text is never replaced: focus it instead.
-    function keepDirtyBox() {
+    function dirty() {
       if (!box) return false;
       var start = box.mode === "edit" ? box.was : "";
-      if (box.ta.value.trim() === String(start || "").trim()) return false;
+      return box.ta.value.trim() !== String(start || "").trim();
+    }
+
+    // A box holding unsaved text is never replaced: focus it instead.
+    function keepDirtyBox() {
+      if (!dirty()) return false;
       box.ta.focus();
       return true;
     }
@@ -386,6 +398,7 @@
         ? { block: b.anchor.block, index: b.anchor.index, section: b.anchor.section, heading: b.anchor.heading, quote: b.quote || "", text: text }
         : { id: b.id, was: b.was, text: text };
       b.saving = true;
+      b.ta.readOnly = true; // nothing typed now could be saved
       showErr("");
       update();
       fetch(notesURL, {
@@ -397,6 +410,7 @@
         return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
       }).then(function (res) {
         b.saving = false;
+        b.ta.readOnly = false;
         var r = res.r, d = res.d;
         if (r.ok) {
           upsert(d);
@@ -418,6 +432,7 @@
         update();
       }).catch(function () {
         b.saving = false;
+        b.ta.readOnly = false;
         showErr("Couldn't save — not connected");
         update();
       });
@@ -431,7 +446,8 @@
       if (!box) return;
       box.save.disabled = !ok || box.saving;
       var msg = "";
-      if (!isLive) msg = "Offline — your note is kept here until the connection is back";
+      if (stopped) msg = "No longer shared — this note can't be saved; copy it if you want to keep it";
+      else if (!isLive) msg = "Offline — your note is kept here; save it once the page is Live again";
       else if (!enabled) msg = "Notes can't be saved from this network";
       box.status.textContent = msg;
       box.status.hidden = !msg;
@@ -496,6 +512,7 @@
 
     return {
       update: update,
+      typing: function () { return !!box && document.activeElement === box.ta; },
       beforeReplace: function () { if (box) box.el.remove(); },
       afterReplace: function (newList, newEnabled) {
         list = newList;

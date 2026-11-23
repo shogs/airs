@@ -96,9 +96,12 @@ How airs works under the hood, why it's built that way, and what to check by han
   ```
 
   A note runs from its marker to the next marker. Lines starting `>` right after the heading are
-  the quote; the rest is the text. Anything else in the file (your own headings, text before the
-  first marker) is ignored and kept as is. `<!--` typed in a note is stored as `<!‐‐` so it can't
-  start a marker.
+  the quote; the rest is the text, so anything you type below a note on the Mac becomes part of
+  that note (and is replaced if the note is edited on the iPad). Text before the first marker is
+  ignored and kept as is. `<!--` typed in a note is stored as `<!‐‐` so it can't start a marker,
+  and note text starting with `>` is stored as `\>` so it doesn't read back as a quote.
+- **Only a real file.** airs refuses to write a notes file that is a symlink (or anything but a
+  regular file), so a link planted in a shared folder can't redirect notes into another file.
 - **Placement.** `block` is the start (80 characters) of the paragraph the note was added on, and
   `index` is that paragraph's position. The page looks for the paragraph by text first, then by
   position within the same section, then the section heading, then puts the note in a **Notes**
@@ -140,7 +143,9 @@ How airs works under the hood, why it's built that way, and what to check by han
 - **Folder listings.** They update in place rather than reloading.
 - **Live / Offline pill.** Shows whether the live-update connection is open. Notes can only be
   added or edited while Live. A note box that's open when the page goes Offline keeps its text
-  and saves once it reconnects. A box with unsaved text is never replaced by opening another.
+  and can be saved once the page is Live again. A box with unsaved text is never replaced by
+  opening another, and Escape only closes an unchanged box. While you type in a note, live
+  refreshes wait until the box loses focus, so the iPad keyboard doesn't close mid-sentence.
 - **Taps.** Only finger and Pencil taps open a note box (`pointerType` touch or pen); mouse clicks
   on the Mac don't, so reading there doesn't pop boxes open. Links, buttons and selections are
   left alone.
@@ -161,6 +166,9 @@ How airs works under the hood, why it's built that way, and what to check by han
   and add notes to them.
 - **Notes write to your folders.** Anyone who can add notes can create or append to
   `<doc>.notes.md` beside a shared document. Nothing else is written.
+- **`.local` names.** The Host check accepts any `*.local` name. A device on the same network
+  could in principle use its own `.local` name to get a page open on the Mac to read shared items
+  and add notes. This needs you to open that device's page on the Mac.
 
 ## Other behaviour worth knowing
 
@@ -199,7 +207,9 @@ These need real devices and can't be automated:
 - [ ] **Scribble.** Write in the note box with the Pencil; it turns into text. Save it and check
   `<doc>.notes.md` on the Mac.
 - [ ] **Quote a selection.** Select text, tap **Add note**; the box shows the quote. iOS's own
-  selection menu doesn't cover the button.
+  selection menu doesn't cover the button, and the button still works when iOS clears the
+  selection as you tap it.
+- [ ] **Dismissing a selection.** With text selected, tap elsewhere to deselect: no note box opens.
 - [ ] **Edit on both sides.** Edit a note on the iPad; then edit the same note on the Mac while
   the iPad's box is open, and save on the iPad: it shows "Changed on the Mac" and keeps your text.
 - [ ] **Offline notes.** Turn Wi-Fi off on the iPad with a note box open: the pill shows Offline,

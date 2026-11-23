@@ -343,3 +343,43 @@ func TestEditCRLFFile(t *testing.T) {
 		t.Fatalf("%+v", ns)
 	}
 }
+
+func TestRefusesSymlinkedNotesFile(t *testing.T) {
+	d := doc(t)
+	target := filepath.Join(t.TempDir(), "authorized_keys")
+	os.WriteFile(target, []byte("keep\n"), 0o600)
+	if err := os.Symlink(target, Path(d)); err != nil {
+		t.Fatal(err)
+	}
+	var w Writer
+	if _, err := w.Append(d, sample, t0); err == nil {
+		t.Fatal("append through a symlink succeeded")
+	}
+	if _, err := w.Edit(d, "x", "", "y", t0); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("edit through a symlink: %v", err)
+	}
+	if got := read(t, target); got != "keep\n" {
+		t.Fatalf("target changed: %q", got)
+	}
+}
+
+func TestTextStartingWithQuoteMark(t *testing.T) {
+	d := doc(t)
+	var w Writer
+	in := Input{Block: "b", Text: "> I disagree\nsecond line"}
+	n, err := w.Append(d, in, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ns, _ := Read(d)
+	if len(ns) != 1 || ns[0].Quote != "" || ns[0].Text != in.Text {
+		t.Fatalf("%+v", ns)
+	}
+	if _, err := w.Edit(d, n.ID, in.Text, "> still mine", t0); err != nil {
+		t.Fatal(err)
+	}
+	ns, _ = Read(d)
+	if ns[0].Quote != "" || ns[0].Text != "> still mine" {
+		t.Fatalf("after edit: %+v", ns[0])
+	}
+}

@@ -66,7 +66,8 @@ handwriting into text. Tap a note to edit it.
 - **Edits don't clash.** If a note was changed on the Mac while you edited it on the iPad, airs
   shows the Mac's version and keeps what you typed, so nothing is overwritten.
 - **Live / Offline.** The pill in the top-right corner shows whether the page is connected.
-  Offline, notes are read-only: an open note keeps your text and saves once you're back.
+  Offline, notes are read-only: an open note keeps your text, and you can save it once the page
+  is Live again.
 - **Who can write.** Notes can be added from your trusted network or the Mac itself. Items shared
   with `--any` are read-only on other networks.
 - **Turning notes off.** Use `--no-notes` for one item, or `notes = false` in the config for all of
