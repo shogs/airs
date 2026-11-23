@@ -16,6 +16,7 @@ func (d *Daemon) controlHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /items", d.ctlList)
 	mux.HandleFunc("POST /items", d.ctlAdd)
+	mux.HandleFunc("GET /items/{query...}", d.ctlFind)
 	mux.HandleFunc("DELETE /items/{query...}", d.ctlRemove)
 	mux.HandleFunc("POST /trust", d.ctlTrust)
 	mux.HandleFunc("DELETE /trust", d.ctlUntrust)
@@ -83,7 +84,11 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	it, existed, err := d.store.Add(filepath.Clean(req.Path), fi.IsDir(), req.Any)
+	canon, err := filepath.EvalSymlinks(req.Path)
+	if err != nil {
+		canon = filepath.Clean(req.Path)
+	}
+	it, existed, err := d.store.Add(canon, fi.IsDir(), req.Any)
 	if err != nil {
 		ctlError(w, 500, err.Error())
 		return
@@ -96,22 +101,47 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, api.AddResponse{Item: d.view(it), Existed: existed, NetworkTrusted: trusted})
 }
 
-func (d *Daemon) ctlRemove(w http.ResponseWriter, r *http.Request) {
-	it, err := d.store.Remove(r.PathValue("query"))
+// findError writes the response for a failed lookup; it reports whether err was nil.
+func (d *Daemon) findError(w http.ResponseWriter, query string, err error) bool {
 	var amb *state.AmbiguousError
 	switch {
+	case err == nil:
+		return true
 	case errors.As(err, &amb):
 		resp := api.ErrorResponse{Error: amb.Error()}
 		for _, m := range amb.Matches {
 			resp.Matches = append(resp.Matches, d.view(m))
 		}
 		writeJSON(w, 409, resp)
-		return
 	case errors.Is(err, state.ErrNotFound):
-		ctlError(w, 404, "nothing shared matches "+r.PathValue("query"))
-		return
-	case err != nil:
+		ctlError(w, 404, "nothing shared matches "+query)
+	default:
 		ctlError(w, 500, err.Error())
+	}
+	return false
+}
+
+// canonicalQuery resolves symlinks in an absolute path query so it matches the
+// stored (resolved) path.
+func canonicalQuery(q string) string {
+	if filepath.IsAbs(q) {
+		if c, err := filepath.EvalSymlinks(q); err == nil {
+			return c
+		}
+	}
+	return q
+}
+
+func (d *Daemon) ctlFind(w http.ResponseWriter, r *http.Request) {
+	it, err := d.store.Find(canonicalQuery(r.PathValue("query")))
+	if d.findError(w, r.PathValue("query"), err) {
+		writeJSON(w, 200, d.view(it))
+	}
+}
+
+func (d *Daemon) ctlRemove(w http.ResponseWriter, r *http.Request) {
+	it, err := d.store.Remove(canonicalQuery(r.PathValue("query")))
+	if !d.findError(w, r.PathValue("query"), err) {
 		return
 	}
 	d.hub.Unwatch(it.ID)

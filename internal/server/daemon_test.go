@@ -60,6 +60,9 @@ func shortTemp(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(d) })
+	if r, err := filepath.EvalSymlinks(d); err == nil {
+		d = r // stored paths are symlink-resolved
+	}
 	return d
 }
 
@@ -448,5 +451,42 @@ func TestStopWithIdleUnusedConnections(t *testing.T) {
 	h.call(t, "POST", "/stop", nil, nil)
 	if err := h.waitExit(t, time.Second); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestControlFind(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0})
+	h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "a/notes.md")}, nil)
+	var v api.ItemView
+	if code := h.call(t, "GET", "/items/notes.md", nil, &v); code != 200 || v.ID != 1 {
+		t.Fatalf("%d %+v", code, v)
+	}
+	if code := h.call(t, "GET", "/items/1", nil, &v); code != 200 || v.ID != 1 {
+		t.Fatalf("by id %d", code)
+	}
+	h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "b/notes.md")}, nil)
+	var e api.ErrorResponse
+	if code := h.call(t, "GET", "/items/notes.md", nil, &e); code != 409 || len(e.Matches) != 2 {
+		t.Fatalf("ambiguous %d %+v", code, e)
+	}
+	if code := h.call(t, "GET", "/items/zzz", nil, &e); code != 404 {
+		t.Fatalf("missing %d", code)
+	}
+}
+
+func TestControlPathsAreSymlinkResolved(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0})
+	real := h.file(t, "real/notes.md")
+	link := filepath.Join(h.tmp, "link")
+	os.Symlink(filepath.Dir(real), link)
+	var add api.AddResponse
+	h.call(t, "POST", "/items", api.AddRequest{Path: filepath.Join(link, "notes.md")}, &add)
+	if add.Item.Path != real {
+		t.Fatalf("stored %s, want %s", add.Item.Path, real)
+	}
+	if code := h.call(t, "DELETE", "/items/"+url.PathEscape(filepath.Join(link, "notes.md")), nil, nil); code != 200 {
+		t.Fatalf("remove via symlink path %d", code)
 	}
 }
