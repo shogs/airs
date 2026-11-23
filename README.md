@@ -1,8 +1,8 @@
 # airs
 
 Read your markdown on your iPad or iPhone. `airs` shares markdown files and folders from your Mac
-over Wi-Fi. Pages refresh when you save, you get a QR code for every link, and you can AirDrop
-any link to your devices.
+over Wi-Fi. Pages refresh when you save, you get a QR code for every link, you can AirDrop
+any link to your devices, and you can jot notes on a page with your finger or Apple Pencil.
 
 ```
 $ airs notes.md
@@ -23,8 +23,8 @@ go install ./cmd/airs
 
 | Command | What it does |
 |---|---|
-| `airs <file\|folder> [--any]` | Share a markdown file or a folder. Prints the link and a QR code. |
-| `airs add <file\|folder> [--any]` | Same as above, spelled out. Use it, or `./`, for a file whose name matches a command (`airs add list`). |
+| `airs <file\|folder> [--any] [--no-notes]` | Share a markdown file or a folder. Prints the link and a QR code. `--no-notes` stops readers adding notes to it. |
+| `airs add <file\|folder> [--any] [--no-notes]` | Same as above, spelled out. Use it, or `./`, for a file whose name matches a command (`airs add list`). |
 | `airs list` | Show what's shared, with ids, links and status. |
 | `airs remove <id\|name>` | Stop sharing. Takes an id, a name (`notes.md`, `docs`), or a path. |
 | `airs qr [id\|name]` | Print a QR code. With no argument it prints the code for the index page. |
@@ -52,6 +52,26 @@ shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
   share one item on any network, add it with `--any`. To turn the check off everywhere, set
   `any_network = true` in the config.
 
+## Notes
+
+Tap a paragraph on the iPad (finger or Apple Pencil) to add a note under it, or select some text
+and tap **Add note** to quote it. Type, or write with the Pencil: iPadOS Scribble turns
+handwriting into text. Tap a note to edit it.
+
+- **Saved next to the document.** `README.md` gets `README.notes.md` in the same folder. It's
+  plain markdown with one section per note, so you can read it in any editor. Editing or deleting
+  a note there updates open pages live.
+- **Stays with its paragraph.** If the document changes, each note stays under the paragraph it
+  was written on. If that paragraph is gone, it moves to a **Notes** list at the end.
+- **Edits don't clash.** If a note was changed on the Mac while you edited it on the iPad, airs
+  shows the Mac's version and keeps what you typed, so nothing is overwritten.
+- **Live / Offline.** The pill in the top-right corner shows whether the page is connected.
+  Offline, notes are read-only: an open note keeps your text and saves once you're back.
+- **Who can write.** Notes can be added from your trusted network or the Mac itself. Items shared
+  with `--any` are read-only on other networks.
+- **Turning notes off.** Use `--no-notes` for one item, or `notes = false` in the config for all of
+  them. Mouse clicks on the Mac don't open a note box; select text and use **Add note** instead.
+
 ## Configuration
 
 `~/.config/airs/config.toml` (or `$XDG_CONFIG_HOME/airs/config.toml`):
@@ -59,6 +79,7 @@ shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
 ```toml
 port = 7777          # LAN port; airs fails with a clear message if it's taken
 any_network = false  # true = share on every network
+notes = true         # false = readers can't add notes anywhere
 ```
 
 ## Files
@@ -68,6 +89,7 @@ any_network = false  # true = share on every network
 | `~/.local/state/airs/state.json` | Shared items and trusted networks |
 | `~/.local/state/airs/airs.log` | Server log |
 | `~/.local/state/airs/airs.sock` | Control socket (JSON over HTTP), also meant for a future menu bar app |
+| `<doc>.notes.md` next to each document | Reader notes for that document |
 
 ## Known issues
 
@@ -89,6 +111,10 @@ any_network = false  # true = share on every network
 - **Many tabs:** each tab holds one live-update connection, so six or more airs tabs in one
   desktop browser can stall.
 - **`untrust` message:** `airs untrust` reports success even when the network wasn't trusted.
+- **Notes under list items** are placed inside the list, which is fine in browsers but isn't
+  strictly valid HTML.
+- **Pencil and Scribble** are only tested in an iPad-sized desktop browser so far; see the manual
+  checks in IMPLEMENTATION.md.
 
 ## Development
 
