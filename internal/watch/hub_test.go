@@ -150,3 +150,13 @@ func TestCloseSendsGone(t *testing.T) {
 	h.Close()
 	expect(t, ch, Gone)
 }
+
+func TestMissingDirStillSubscribable(t *testing.T) {
+	h := newHub(t)
+	if err := h.Watch(3, filepath.Join(t.TempDir(), "nope"), true); err != nil {
+		t.Fatal(err)
+	}
+	ch, cancel := h.Subscribe(3)
+	defer cancel()
+	expectNone(t, ch, 100*time.Millisecond)
+}

@@ -180,3 +180,11 @@ func TestItemURL(t *testing.T) {
 		t.Fatal(u)
 	}
 }
+
+func TestStaticAppJS(t *testing.T) {
+	f := newFixture(t)
+	code, h, body := f.get(t, "/_airs/static/app.js", remote)
+	if code != 200 || !strings.Contains(h.Get("Content-Type"), "javascript") || !strings.Contains(body, "No longer shared — this is the last version") {
+		t.Fatalf("%d %s", code, h.Get("Content-Type"))
+	}
+}

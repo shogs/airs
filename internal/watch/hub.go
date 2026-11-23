@@ -88,10 +88,7 @@ func (h *Hub) Watch(id int, root string, isDir bool) error {
 	}
 	e := &entry{root: root, isDir: isDir}
 	if isDir {
-		if _, err := os.Stat(root); err != nil {
-			return err
-		}
-		h.addTree(e, root)
+		h.addTree(e, root) // a missing folder is registered with no watches
 	} else {
 		h.addDir(e, filepath.Dir(root))
 	}
