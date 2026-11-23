@@ -1,0 +1,18 @@
+{{template "head" .Title}}
+<body>
+<header class="airs-bar">
+  <a class="airs-home" href="/" aria-label="All shared documents">airs</a>
+  <span class="airs-crumb">{{.Title}}</span>
+</header>
+<div id="airs-banner" class="airs-banner" role="status" hidden></div>
+<main>
+<h1 class="airs-title">{{.Title}}</h1>
+{{if .Entries}}<ul class="airs-list">
+{{range .Entries}}<li class="{{if .IsDir}}dir{{else}}file{{end}}"><a href="{{.Href}}">{{.Name}}</a></li>
+{{end}}</ul>{{else}}<p class="airs-empty">No markdown files here.</p>{{end}}
+{{template "qr" .URL}}
+</main>
+<script type="application/json" id="airs-doc">{{.DocJSON}}</script>
+<script src="/_airs/static/app.js" defer></script>
+</body>
+</html>

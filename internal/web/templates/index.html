@@ -1,0 +1,12 @@
+{{template "head" "airs"}}
+<body>
+<header class="airs-bar"><a class="airs-home" href="/">airs</a></header>
+<main>
+<h1 class="airs-title">Shared from this Mac</h1>
+{{if .Items}}<ul class="airs-list">
+{{range .Items}}<li class="{{if .IsDir}}dir{{else}}file{{end}}"><a href="{{.Href}}">{{.Name}}</a></li>
+{{end}}</ul>{{else}}<p class="airs-empty">Nothing is shared on this network.</p>{{end}}
+{{template "qr" "/"}}
+</main>
+</body>
+</html>

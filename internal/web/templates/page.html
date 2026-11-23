@@ -1,0 +1,19 @@
+{{template "head" .Title}}
+<body>
+<header class="airs-bar">
+  <a class="airs-home" href="/" aria-label="All shared documents">airs</a>
+  <span class="airs-crumb">{{.Crumb}}</span>
+  <span class="airs-actions">
+    <button type="button" id="airs-dl-html" title="Download this page for offline reading">⤓ Page</button>
+    <button type="button" id="airs-dl-md" title="Download the markdown source">⤓ .md</button>
+  </span>
+</header>
+<div id="airs-banner" class="airs-banner" role="status" hidden></div>
+<main>
+<article class="markdown-body" id="airs-article">{{.Body}}</article>
+{{template "qr" .URL}}
+</main>
+<script type="application/json" id="airs-doc">{{.DocJSON}}</script>
+<script src="/_airs/static/app.js" defer></script>
+</body>
+</html>

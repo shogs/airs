@@ -1,0 +1,182 @@
+package server
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"airs/internal/config"
+	"airs/internal/netinfo"
+	"airs/internal/state"
+	"airs/internal/watch"
+)
+
+type fixture struct {
+	h     http.Handler
+	store *state.Store
+	ns    *NetState
+	dir   string
+	hub   *watch.Hub
+}
+
+// newFixture serves dir/notes.md (with img.png, secret.txt beside it) and the
+// folder dir/docs.
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "notes.md"), []byte("# Notes\n\n![](img.png)\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "img.png"), []byte("\x89PNG"), 0o644)
+	os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("s"), 0o644)
+	docs := filepath.Join(dir, "docs")
+	mkfile(t, filepath.Join(docs, "a.md"))
+	mkfile(t, filepath.Join(docs, "sub", "b.md"))
+	mkfile(t, filepath.Join(docs, "My Notes", "c.md"))
+	mkfile(t, filepath.Join(docs, ".git", "config"))
+	os.WriteFile(filepath.Join(docs, "pic.png"), []byte("\x89PNG"), 0o644)
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Add(filepath.Join(dir, "notes.md"), false, false)
+	store.Add(docs, true, false)
+	hub, _ := watch.New(0)
+	t.Cleanup(func() { hub.Close() })
+	ns := &NetState{}
+	ns.Set(netinfo.Info{LocalIP: "192.168.1.20"}, true)
+	return &fixture{h: NewHTTP(store, config.Config{Port: 7777}, ns, hub), store: store, ns: ns, dir: dir, hub: hub}
+}
+
+const remote = "192.168.1.50:5000"
+
+func (f *fixture) get(t *testing.T, path, from string) (int, http.Header, string) {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	req.RemoteAddr = from
+	rec := httptest.NewRecorder()
+	f.h.ServeHTTP(rec, req)
+	b, _ := io.ReadAll(rec.Body)
+	return rec.Code, rec.Header(), string(b)
+}
+
+func TestFileRender(t *testing.T) {
+	f := newFixture(t)
+	code, _, body := f.get(t, "/notes.md", remote)
+	if code != 200 || !strings.Contains(body, "<h1") || !strings.Contains(body, "airs-doc") {
+		t.Fatalf("%d %s", code, body)
+	}
+	if !strings.Contains(body, `src="/_airs/asset/notes.md/img.png"`) {
+		t.Fatalf("asset prefix missing: %s", body)
+	}
+	if code, _, _ := f.get(t, "/_airs/asset/notes.md/img.png", remote); code != 200 {
+		t.Fatalf("asset %d", code)
+	}
+}
+
+func TestSlugWithSpaces(t *testing.T) {
+	f := newFixture(t)
+	p := filepath.Join(f.dir, "My Notes.md")
+	os.WriteFile(p, []byte("# x\n"), 0o644)
+	f.store.Add(p, false, false)
+	if code, _, body := f.get(t, "/My%20Notes.md", remote); code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+}
+
+func TestDirListing(t *testing.T) {
+	f := newFixture(t)
+	code, h, _ := f.get(t, "/docs", remote)
+	if code != 301 || h.Get("Location") != "/docs/" {
+		t.Fatalf("%d %v", code, h)
+	}
+	code, _, body := f.get(t, "/docs/", remote)
+	if code != 200 {
+		t.Fatalf("%d", code)
+	}
+	iSub, iMy, iA := strings.Index(body, `href="sub/"`), strings.Index(body, `href="My%20Notes/"`), strings.Index(body, `href="a.md"`)
+	if iSub < 0 || iMy < 0 || iA < 0 || iA < iSub || iA < iMy {
+		t.Fatalf("listing order/links wrong: %s", body)
+	}
+	if strings.Contains(body, ".git") || strings.Contains(body, "pic.png") {
+		t.Fatalf("hidden or non-markdown listed: %s", body)
+	}
+	if code, _, body := f.get(t, "/docs/sub/b.md", remote); code != 200 || !strings.Contains(body, "<h1") {
+		t.Fatalf("nested page %d", code)
+	}
+	if code, _, _ := f.get(t, "/docs/pic.png", remote); code != 200 {
+		t.Fatalf("raw file %d", code)
+	}
+	if code, h, _ := f.get(t, "/docs/sub", remote); code != 301 || h.Get("Location") != "/docs/sub/" {
+		t.Fatalf("subdir redirect %d %v", code, h)
+	}
+}
+
+func TestTraversalHTTP(t *testing.T) {
+	f := newFixture(t)
+	for _, p := range []string{"/docs/..%2f..%2fetc%2fpasswd", "/docs/%2e%2e/notes.md", "/_airs/asset/notes.md/secret.txt", "/notes.md/x", "/docs/.git/config"} {
+		if code, _, _ := f.get(t, p, remote); code != 404 {
+			t.Errorf("%s: %d", p, code)
+		}
+	}
+}
+
+func TestUntrustedRemoteForbidden(t *testing.T) {
+	f := newFixture(t)
+	f.ns.Set(netinfo.Info{LocalIP: "192.168.1.20"}, false)
+	if code, _, _ := f.get(t, "/notes.md", remote); code != 403 {
+		t.Fatalf("remote %d", code)
+	}
+	if code, _, _ := f.get(t, "/_airs/asset/notes.md/img.png", remote); code != 403 {
+		t.Fatalf("asset remote %d", code)
+	}
+	if code, _, _ := f.get(t, "/notes.md", "127.0.0.1:5000"); code != 200 {
+		t.Fatalf("loopback %d", code)
+	}
+	_, _, idx := f.get(t, "/", remote)
+	if strings.Contains(idx, "notes.md") {
+		t.Fatalf("index lists blocked item: %s", idx)
+	}
+	f.store.Add(filepath.Join(f.dir, "notes.md"), false, true)
+	if code, _, _ := f.get(t, "/notes.md", remote); code != 200 {
+		t.Fatalf("any-network item %d", code)
+	}
+}
+
+func TestIndex(t *testing.T) {
+	f := newFixture(t)
+	code, _, body := f.get(t, "/", remote)
+	if code != 200 || !strings.Contains(body, `href="/notes.md"`) || !strings.Contains(body, `href="/docs/"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+}
+
+func TestUnknownName(t *testing.T) {
+	f := newFixture(t)
+	if code, _, _ := f.get(t, "/nope.md", remote); code != 404 {
+		t.Fatalf("%d", code)
+	}
+}
+
+func TestFileMissingOnDisk(t *testing.T) {
+	f := newFixture(t)
+	os.Remove(filepath.Join(f.dir, "notes.md"))
+	if code, _, _ := f.get(t, "/notes.md", remote); code != 404 {
+		t.Fatalf("%d", code)
+	}
+}
+
+func TestItemURL(t *testing.T) {
+	base := BaseURL(netinfo.Info{LocalIP: "10.0.0.2"}, 7777)
+	if base != "http://10.0.0.2:7777" || BaseURL(netinfo.Info{}, 7777) != "http://localhost:7777" {
+		t.Fatal(base)
+	}
+	if u := ItemURL(base, state.Item{Slug: "My Notes.md"}); u != "http://10.0.0.2:7777/My%20Notes.md" {
+		t.Fatal(u)
+	}
+	if u := ItemURL(base, state.Item{Slug: "docs", IsDir: true}); u != "http://10.0.0.2:7777/docs/" {
+		t.Fatal(u)
+	}
+}

@@ -1,0 +1,10 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.}}</title>
+<style id="airs-style">{{style}}</style>
+</head>{{end}}
+{{define "qr"}}<details class="airs-qr"><summary>QR code</summary><img alt="QR code for this page" loading="lazy" width="200" height="200" src="/_airs/qr?u={{.}}"></details>{{end}}
