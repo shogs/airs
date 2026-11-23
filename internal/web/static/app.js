@@ -246,7 +246,36 @@
       var t = fmtTime(n.time);
       if (n.edited) t += " · edited " + fmtTime(n.edited);
       c.appendChild(el("div", "airs-note-time", t));
+      c.appendChild(binButton(n));
       return c;
+    }
+
+    // A bin icon on each card: delete without opening the editor.
+    function binButton(n) {
+      var btn = el("button", "airs-note-del");
+      btn.type = "button";
+      btn.title = "Delete note";
+      btn.setAttribute("aria-label", "Delete note");
+      var NS = "http://www.w3.org/2000/svg";
+      var svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("width", "18");
+      svg.setAttribute("height", "18");
+      svg.setAttribute("aria-hidden", "true");
+      var path = document.createElementNS(NS, "path");
+      path.setAttribute("d", "M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3");
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "2");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      btn.appendChild(svg);
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation(); // not an edit
+        quickDelete(n.id);
+      });
+      return btn;
     }
 
     function cardFor(id) {
@@ -444,31 +473,67 @@
       });
     }
 
+    var CONFIRM_DELETE = "Delete this note? This can't be undone.";
+
+    function sendDelete(id, was) {
+      return fetch(notesURL, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: id, was: was }),
+        cache: "no-store",
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
+      });
+    }
+
+    function dropNote(id) {
+      list = list.filter(function (n) { return n.id !== id; });
+      if (box && box.id === id) closeBox();
+      render();
+      placeBox();
+    }
+
+    // Delete from the card's bin icon, after asking: there is no undo.
+    function quickDelete(id) {
+      var n = null;
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) n = list[i];
+      if (!n || !canWrite()) return;
+      if (!window.confirm(CONFIRM_DELETE)) return;
+      sendDelete(n.id, n.text).then(function (res) {
+        var r = res.r, d = res.d;
+        if (r.ok || r.status === 404) { // 404: already gone on the Mac
+          dropNote(n.id);
+        } else if (r.status === 409 && d.note) {
+          upsert(d.note);
+          render();
+          placeBox();
+          window.alert("This note was changed on the Mac. It now shows the new version; delete again if you still want to.");
+        } else if (r.status === 410) {
+          stop();
+        } else {
+          window.alert("Couldn't delete — " + String(d.error || "error " + r.status).replace(/^couldn't save note: /, ""));
+        }
+        update();
+      }).catch(function () {
+        window.alert("Couldn't delete — not connected");
+      });
+    }
+
     // Delete the note being edited, after asking: there is no undo.
     function remove() {
       if (!box || box.mode !== "edit" || box.saving || !canWrite()) return update();
-      if (!window.confirm("Delete this note? This can't be undone.")) return;
+      if (!window.confirm(CONFIRM_DELETE)) return;
       var b = box;
       b.saving = true;
       b.ta.readOnly = true;
       showErr("");
       update();
-      fetch(notesURL, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: b.id, was: b.was }),
-        cache: "no-store",
-      }).then(function (r) {
-        return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
-      }).then(function (res) {
+      sendDelete(b.id, b.was).then(function (res) {
         b.saving = false;
         b.ta.readOnly = false;
         var r = res.r, d = res.d;
         if (r.ok || r.status === 404) { // 404: already gone on the Mac
-          list = list.filter(function (n) { return n.id !== b.id; });
-          if (box === b) closeBox();
-          render();
-          placeBox();
+          dropNote(b.id);
         } else if (r.status === 409 && d.note) {
           b.was = d.note.text;
           b.showCard = true;
@@ -619,7 +684,7 @@
       } catch (e) { /* cross-origin or unsupported: keep original src */ }
     }
     // Notes are part of the saved page; the editing box is not.
-    var boxes = clone.querySelectorAll(".airs-note-box");
+    var boxes = clone.querySelectorAll(".airs-note-box,.airs-note-del");
     for (var j = 0; j < boxes.length; j++) boxes[j].remove();
     var hidden = clone.querySelectorAll(".airs-note[hidden]");
     for (var k = 0; k < hidden.length; k++) hidden[k].removeAttribute("hidden");

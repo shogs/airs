@@ -113,7 +113,8 @@ How airs works under the hood, why it's built that way, and what to check by han
   Writes go through one lock and edits replace the file atomically.
 - **Deletes.** Remove the note's whole section, from its marker to the next marker, and nothing
   else. Like edits, they send the text the page last saw and get 409 if the note changed on the
-  Mac. The page asks for confirmation first.
+  Mac. The page asks for confirmation first, whether from the bin icon on a note or the Delete
+  button in the edit box. The bin icons only show while notes can be written.
 - **Limits.** Note text up to 10 000 bytes, quote up to 2 000, request body up to 16 KiB.
 - **Who can write.** A write needs a request from the Mac itself, one on the trusted network, or
   `any_network = true`. Per-item `--any` only widens reading. The page gets `notesEnabled` per
@@ -215,7 +216,7 @@ These need real devices and can't be automated:
 - [ ] **Dismissing a selection.** With text selected, tap elsewhere to deselect: no note box opens.
 - [ ] **Edit on both sides.** Edit a note on the iPad; then edit the same note on the Mac while
   the iPad's box is open, and save on the iPad: it shows "Changed on the Mac" and keeps your text.
-- [ ] **Delete.** Tap a note, tap **Delete**, confirm: the note disappears from the page and from
+- [ ] **Delete.** Tap a note's bin icon (and, separately, **Delete** in the edit box), confirm: the note disappears from the page and from
   `<doc>.notes.md`. Cancelling the confirmation keeps it.
 - [ ] **Offline notes.** Turn Wi-Fi off on the iPad with a note box open: the pill shows Offline,
   Save is disabled, the text stays. Turn it back on: Live, and Save works.

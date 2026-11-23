@@ -56,7 +56,7 @@ shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
 
 Tap a paragraph on the iPad (finger or Apple Pencil) to add a note under it, or select some text
 and tap **Add note** to quote it. Type, or write with the Pencil: iPadOS Scribble turns
-handwriting into text. Tap a note to edit or delete it (delete asks first; there's no undo).
+handwriting into text. Tap a note to edit it, or tap its bin icon to delete it (it asks first; there's no undo).
 
 - **Saved next to the document.** `README.md` gets `README.notes.md` in the same folder. It's
   plain markdown with one section per note, so you can read it in any editor. Editing or deleting
