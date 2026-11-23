@@ -18,7 +18,7 @@ func open(t *testing.T) (*Store, string) {
 
 func mustAdd(t *testing.T, s *Store, path string, dir bool) Item {
 	t.Helper()
-	it, _, err := s.Add(path, dir, false)
+	it, _, err := s.Add(path, dir, Flags{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,11 +49,11 @@ func TestAddAssignsIncrementingIDs(t *testing.T) {
 func TestAddExistingPathReturnsExisting(t *testing.T) {
 	s, _ := open(t)
 	a := mustAdd(t, s, "/x/a.md", false)
-	b, existed, err := s.Add("/x/a.md", false, false)
+	b, existed, err := s.Add("/x/a.md", false, Flags{})
 	if err != nil || !existed || b.ID != a.ID {
 		t.Fatalf("got %+v %v %v", b, existed, err)
 	}
-	c, existed, _ := s.Add("/x/a.md", false, true)
+	c, existed, _ := s.Add("/x/a.md", false, Flags{AnyNetwork: true})
 	if !existed || !c.AnyNetwork || !s.Items()[0].AnyNetwork {
 		t.Fatalf("any not updated: %+v", c)
 	}
@@ -151,5 +151,25 @@ func TestNameAndKey(t *testing.T) {
 	b := Item{ID: 1, Slug: "x.md", Path: "/b"}
 	if a.Key() == b.Key() || a.Key() != a.Key() {
 		t.Fatal("Key")
+	}
+}
+
+func TestAddFlags(t *testing.T) {
+	s, p := open(t)
+	it, _, err := s.Add("/x/a.md", false, Flags{NoNotes: true})
+	if err != nil || !it.NoNotes {
+		t.Fatal(it, err)
+	}
+	it, existed, _ := s.Add("/x/a.md", false, Flags{})
+	if !existed || !it.NoNotes {
+		t.Fatalf("plain re-add cleared NoNotes: %+v", it)
+	}
+	it, _, _ = s.Add("/x/a.md", false, Flags{AnyNetwork: true})
+	if !it.AnyNetwork || !it.NoNotes {
+		t.Fatalf("%+v", it)
+	}
+	s2, _ := Open(p)
+	if got := s2.Items()[0]; !got.NoNotes || !got.AnyNetwork {
+		t.Fatalf("not persisted: %+v", got)
 	}
 }

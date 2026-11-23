@@ -360,7 +360,7 @@ func TestRestoresItemsOnStart(t *testing.T) {
 	h := newHarness(t, trusted)
 	f := h.file(t, "notes.md")
 	st, _ := state.Open(h.dirs.StateFile())
-	st.Add(f, false, false)
+	st.Add(f, false, state.Flags{})
 	h.start(t, config.Config{Port: 0})
 	var items []api.ItemView
 	h.call(t, "GET", "/items", nil, &items)
@@ -392,7 +392,7 @@ func TestStaleSocketRemoved(t *testing.T) {
 	ln.(*net.UnixListener).SetUnlinkOnClose(false)
 	ln.Close() // leaves a dead socket file behind, like kill -9
 	st, _ := state.Open(h.dirs.StateFile())
-	st.Add(h.file(t, "notes.md"), false, false)
+	st.Add(h.file(t, "notes.md"), false, state.Flags{})
 	h.start(t, config.Config{Port: 0})
 	var s api.StatusResponse
 	if code := h.call(t, "GET", "/status", nil, &s); code != 200 || s.PID != os.Getpid() {
@@ -403,7 +403,7 @@ func TestStaleSocketRemoved(t *testing.T) {
 func TestSecondInstanceRefused(t *testing.T) {
 	h := newHarness(t, trusted)
 	st, _ := state.Open(func() string { os.MkdirAll(h.dirs.State, 0o700); return h.dirs.StateFile() }())
-	st.Add(h.file(t, "notes.md"), false, false)
+	st.Add(h.file(t, "notes.md"), false, state.Flags{})
 	h.start(t, config.Config{Port: 0})
 	d2, _ := NewDaemon(h.dirs, config.Config{Port: 0}, h.net)
 	err := d2.Run(context.Background())

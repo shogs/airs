@@ -41,7 +41,7 @@ func setup(t *testing.T, trusted bool) *env {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "s"))
 	old := client.Start
 	client.Start = func(dirs paths.Dirs) error {
-		d, err := server.NewDaemon(dirs, config.Config{Port: 0}, e.net)
+		d, err := server.NewDaemon(dirs, config.Config{Port: 0, Notes: true}, e.net)
 		if err != nil {
 			return err
 		}
@@ -283,5 +283,30 @@ func TestAddSubcommand(t *testing.T) {
 	}
 	if _, errs, code := e.run(t, "add"); code == 0 || !strings.Contains(errs, "usage: airs add <file|folder> [--any]") {
 		t.Fatalf("bare add: %d %q", code, errs)
+	}
+}
+
+func TestAddNoNotes(t *testing.T) {
+	e := setup(t, true)
+	if out, errs, code := e.run(t, "add", e.file(t, "quiet.md"), "--no-notes"); code != 0 {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+	e.run(t, e.file(t, "loud.md"))
+	out, _, _ := e.run(t, "list")
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(line, "quiet.md") && !strings.HasSuffix(strings.TrimSpace(line), "(no notes)"):
+			t.Fatalf("quiet.md row: %q", line)
+		case strings.Contains(line, "loud.md") && strings.Contains(line, "(no notes)"):
+			t.Fatalf("loud.md row: %q", line)
+		}
+	}
+}
+
+func TestHelpMentionsNoNotes(t *testing.T) {
+	e := setup(t, false)
+	out, _, _ := e.run(t, "help")
+	if !strings.Contains(out, "--no-notes") || !strings.Contains(out, "notes = false") {
+		t.Fatal(out)
 	}
 }

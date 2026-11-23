@@ -15,13 +15,15 @@ type ItemView struct {
 	Path       string `json:"path"`
 	IsDir      bool   `json:"is_dir"`
 	AnyNetwork bool   `json:"any_network"`
+	Notes      bool   `json:"notes"` // readers may add notes (config and item allow it)
 	URL        string `json:"url"`
 	Status     string `json:"status"`
 }
 
 type AddRequest struct {
-	Path string `json:"path"`
-	Any  bool   `json:"any"`
+	Path    string `json:"path"`
+	Any     bool   `json:"any"`
+	NoNotes bool   `json:"no_notes"`
 }
 
 type AddResponse struct {

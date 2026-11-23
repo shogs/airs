@@ -16,14 +16,15 @@ const DefaultPort = 7777
 type Config struct {
 	Port       int  `toml:"port"`
 	AnyNetwork bool `toml:"any_network"`
+	Notes      bool `toml:"notes"` // readers may add notes; default true
 }
 
 // Load reads path; a missing file yields defaults.
 func Load(path string) (Config, error) {
-	c := Config{Port: DefaultPort}
+	c := Config{Port: DefaultPort, Notes: true}
 	md, err := toml.DecodeFile(path, &c)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Config{Port: DefaultPort}, nil
+		return Config{Port: DefaultPort, Notes: true}, nil
 	}
 	if err != nil {
 		return Config{}, fmt.Errorf("config %s: %w", path, err)

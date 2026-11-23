@@ -42,11 +42,18 @@ func statusText(s string) string {
 	return s
 }
 
+func noNotes(it api.ItemView) string {
+	if it.Notes {
+		return ""
+	}
+	return " (no notes)"
+}
+
 func printList(w io.Writer, items []api.ItemView) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tNAME\tPATH\tURL\tSTATUS")
 	for _, it := range items {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", strconv.Itoa(it.ID), it.Name, tildePath(it.Path), it.URL, statusText(it.Status))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", strconv.Itoa(it.ID), it.Name, tildePath(it.Path), it.URL, statusText(it.Status)+noNotes(it))
 	}
 	tw.Flush()
 }

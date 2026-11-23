@@ -43,8 +43,8 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.Add(filepath.Join(dir, "notes.md"), false, false)
-	store.Add(docs, true, false)
+	store.Add(filepath.Join(dir, "notes.md"), false, state.Flags{})
+	store.Add(docs, true, state.Flags{})
 	hub, _ := watch.New(0)
 	t.Cleanup(func() { hub.Close() })
 	ns := &NetState{}
@@ -92,7 +92,7 @@ func TestSlugWithSpaces(t *testing.T) {
 	f := newFixture(t)
 	p := filepath.Join(f.dir, "My Notes.md")
 	os.WriteFile(p, []byte("# x\n"), 0o644)
-	f.store.Add(p, false, false)
+	f.store.Add(p, false, state.Flags{})
 	if code, _, body := f.get(t, "/My%20Notes.md", remote); code != 200 {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -151,7 +151,7 @@ func TestUntrustedRemoteForbidden(t *testing.T) {
 	if strings.Contains(idx, "notes.md") {
 		t.Fatalf("index lists blocked item: %s", idx)
 	}
-	f.store.Add(filepath.Join(f.dir, "notes.md"), false, true)
+	f.store.Add(filepath.Join(f.dir, "notes.md"), false, state.Flags{AnyNetwork: true})
 	if code, _, _ := f.get(t, "/notes.md", remote); code != 200 {
 		t.Fatalf("any-network item %d", code)
 	}

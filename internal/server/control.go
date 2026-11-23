@@ -35,7 +35,7 @@ func ctlError(w http.ResponseWriter, status int, msg string) {
 func (d *Daemon) view(it state.Item) api.ItemView {
 	info, trusted := d.ns.Get()
 	v := api.ItemView{
-		ID: it.ID, Name: it.Name(), Path: it.Path, IsDir: it.IsDir, AnyNetwork: it.AnyNetwork,
+		ID: it.ID, Name: it.Name(), Path: it.Path, IsDir: it.IsDir, AnyNetwork: it.AnyNetwork, Notes: d.cfg.Notes && !it.NoNotes,
 		URL: ItemURL(BaseURL(info, d.port), it), Status: api.StatusShared,
 	}
 	if _, err := os.Stat(it.Path); err != nil {
@@ -88,7 +88,7 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		canon = filepath.Clean(req.Path)
 	}
-	it, existed, err := d.store.Add(canon, fi.IsDir(), req.Any)
+	it, existed, err := d.store.Add(canon, fi.IsDir(), state.Flags{AnyNetwork: req.Any, NoNotes: req.NoNotes})
 	if err != nil {
 		ctlError(w, 500, err.Error())
 		return

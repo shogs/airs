@@ -21,7 +21,8 @@ import (
 
 const usage = `airs — read your markdown on other devices
 
-  airs <file|folder> [--any]   share a file or folder (prints link + QR code)
+  airs <file|folder> [--any] [--no-notes]
+                               share a file or folder (prints link + QR code)
   airs add <file|folder>       same as above
   airs list                    what's shared
   airs remove <id|name>        stop sharing
@@ -33,6 +34,8 @@ const usage = `airs — read your markdown on other devices
 
 Items are only shared on trusted networks. --any shares an item on any network;
 any_network = true in ~/.config/airs/config.toml turns the check off.
+Readers can add notes, saved beside the document (README.md → README.notes.md).
+--no-notes turns that off for one item; notes = false in the config turns it off everywhere.
 `
 
 type cmd struct {
@@ -84,7 +87,7 @@ func (c *cmd) dispatch(args []string) error {
 		fmt.Fprint(c.out, usage)
 		return nil
 	case "add":
-		return c.add(rest, "usage: airs add <file|folder> [--any]")
+		return c.add(rest, "usage: airs add <file|folder> [--any] [--no-notes]")
 	case "list", "ls":
 		return c.list()
 	case "remove", "rm":
@@ -124,7 +127,7 @@ func (c *cmd) dispatch(args []string) error {
 	case "__serve":
 		return errUsage("__serve is internal")
 	}
-	return c.add(args, "usage: airs <file|folder> [--any]")
+	return c.add(args, "usage: airs <file|folder> [--any] [--no-notes]")
 }
 
 func oneArg(u string, rest []string) (string, error) {
@@ -155,11 +158,13 @@ var errNothingShared = errors.New("nothing is being shared")
 
 func (c *cmd) add(args []string, usageMsg string) error {
 	var target string
-	any := false
+	any, noNotes := false, false
 	for _, a := range args {
 		switch {
 		case a == "--any":
 			any = true
+		case a == "--no-notes":
+			noNotes = true
 		case len(a) > 1 && a[0] == '-':
 			return errUsage("unknown flag " + a)
 		case target != "":
@@ -188,7 +193,7 @@ func (c *cmd) add(args []string, usageMsg string) error {
 	if err != nil {
 		return err
 	}
-	res, err := cl.Add(api.AddRequest{Path: abs, Any: any})
+	res, err := cl.Add(api.AddRequest{Path: abs, Any: any, NoNotes: noNotes})
 	if err != nil {
 		return err
 	}

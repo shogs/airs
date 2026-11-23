@@ -34,8 +34,12 @@ type Item struct {
 	Path       string `json:"path"`
 	IsDir      bool   `json:"is_dir"`
 	AnyNetwork bool   `json:"any_network"`
+	NoNotes    bool   `json:"no_notes,omitempty"`
 	Slug       string `json:"slug"`
 }
+
+// Flags are the per-item options set when adding.
+type Flags struct{ AnyNetwork, NoNotes bool }
 
 // Name is the basename, with a trailing slash for folders.
 func (it Item) Name() string {
@@ -120,13 +124,15 @@ func (s *Store) Items() []Item {
 }
 
 // Add adds absPath, or returns the existing item (updating AnyNetwork when any is set).
-func (s *Store) Add(absPath string, isDir, any bool) (Item, bool, error) {
+func (s *Store) Add(absPath string, isDir bool, f Flags) (Item, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for i, it := range s.d.Items {
 		if it.Path == absPath {
-			if any && !it.AnyNetwork {
-				s.d.Items[i].AnyNetwork = true
+			// Flags given on a re-add are turned on; omitted ones are left alone.
+			if (f.AnyNetwork && !it.AnyNetwork) || (f.NoNotes && !it.NoNotes) {
+				s.d.Items[i].AnyNetwork = it.AnyNetwork || f.AnyNetwork
+				s.d.Items[i].NoNotes = it.NoNotes || f.NoNotes
 				if err := s.save(); err != nil {
 					return Item{}, true, err
 				}
@@ -140,7 +146,7 @@ func (s *Store) Add(absPath string, isDir, any bool) (Item, bool, error) {
 			id = it.ID + 1
 		}
 	}
-	it := Item{ID: id, Path: absPath, IsDir: isDir, AnyNetwork: any, Slug: s.uniqueSlug(filepath.Base(absPath))}
+	it := Item{ID: id, Path: absPath, IsDir: isDir, AnyNetwork: f.AnyNetwork, NoNotes: f.NoNotes, Slug: s.uniqueSlug(filepath.Base(absPath))}
 	s.d.Items = append(s.d.Items, it)
 	return it, false, s.save()
 }

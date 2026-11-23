@@ -145,10 +145,10 @@ func TestStaleKeyAfterNameReuse(t *testing.T) {
 	b := filepath.Join(f.dir, "b", "README.md")
 	mkfile(t, a)
 	mkfile(t, b)
-	old, _, _ := f.store.Add(a, false, false)
+	old, _, _ := f.store.Add(a, false, state.Flags{})
 	f.store.Remove(a)
 	f.hub.Unwatch(old.ID)
-	nu, _, _ := f.store.Add(b, false, false)
+	nu, _, _ := f.store.Add(b, false, state.Flags{})
 	if nu.Slug != old.Slug {
 		t.Fatalf("slug not reused: %q vs %q", nu.Slug, old.Slug)
 	}
