@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -94,6 +96,12 @@ func saveError(w http.ResponseWriter, err error) {
 	case errors.Is(err, notes.ErrNotFound):
 		noteError(w, http.StatusNotFound, "note not found — it may have been removed on the Mac")
 	default:
+		log.Printf("save note: %v", err)
+		// The page only needs the reason, not the path on the Mac.
+		var pe *fs.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
 		noteError(w, http.StatusInternalServerError, "couldn't save note: "+err.Error())
 	}
 }

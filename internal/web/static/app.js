@@ -1,5 +1,7 @@
-// airs page script: live reload, keep-reading banners, offline downloads.
-// Rule: an open page never replaces good content with an error.
+// airs page script: live reload, Live/Offline pill, keep-reading banners,
+// offline downloads, and reader notes.
+// Rule: an open page never replaces good content with an error, and never
+// throws away a note the reader typed.
 (function () {
   "use strict";
 
@@ -15,15 +17,17 @@
   try { doc = JSON.parse(docEl.textContent); } catch (e) { return; }
 
   var banner = document.getElementById("airs-banner");
+  var pill = document.getElementById("airs-live");
+  var relPath = (doc.rel || "").split("/").map(encodeURIComponent).join("/");
   var eventsURL = "/_airs/events/" + encodeURIComponent(doc.key);
-  var renderURL = "/_airs/render/" + encodeURIComponent(doc.key) + "/" +
-    (doc.rel || "").split("/").map(encodeURIComponent).join("/");
+  var renderURL = "/_airs/render/" + encodeURIComponent(doc.key) + "/" + relPath;
 
   var es = null;
   var stopped = false;
   var disconnected = false;
   var backoff = 1000;
   var retryTimer = null;
+  var isLive = false;
 
   function showBanner(kind) {
     if (!banner) return;
@@ -38,11 +42,22 @@
     }
   }
 
+  // Live/Offline pill. Notes can only be written while Live.
+  function setLive(on) {
+    isLive = on && !stopped;
+    if (pill) {
+      pill.dataset.state = isLive ? "live" : "offline";
+      pill.textContent = isLive ? "● Live" : "● Offline";
+    }
+    notes.update();
+  }
+
   function stop() {
     stopped = true;
     if (es) es.close();
     if (retryTimer) clearTimeout(retryTimer);
     showBanner("gone");
+    setLive(false);
   }
 
   function scheduleRetry() {
@@ -63,7 +78,9 @@
         var article = document.getElementById("airs-article");
         if (!article) return;
         var y = window.scrollY;
+        notes.beforeReplace();
         article.innerHTML = d.html;
+        notes.afterReplace(d.notes || [], !!d.notesEnabled);
         window.scrollTo(0, y);
         doc.markdown = d.markdown;
         doc.title = d.title;
@@ -104,6 +121,7 @@
     es = new EventSource(eventsURL);
     es.addEventListener("ready", function () {
       backoff = 1000;
+      setLive(true);
       if (disconnected) {
         disconnected = false;
         refresh(); // catch up on edits made while we were away
@@ -116,9 +134,378 @@
       if (stopped) return;
       es.close();
       disconnected = true;
+      setLive(false);
       probe();
     };
   }
+
+  // --- notes ---
+
+  var notes = (function () {
+    var noop = { update: function () {}, beforeReplace: function () {}, afterReplace: function () {} };
+    var article = document.getElementById("airs-article");
+    if (doc.kind !== "doc" || !article) return noop;
+
+    // This rule is stored in users' notes files (block, index): never change it.
+    var BLOCKS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,pre,table";
+    var SKIP = ".airs-note,.airs-note-box";
+    var MAX_QUOTE = 2000;
+    var notesURL = "/_airs/notes/" + encodeURIComponent(doc.key) + "/" + relPath;
+    var list = doc.notes || [];
+    var enabled = !!doc.notesEnabled;
+    var box = null;
+    var lastPointer = "mouse";
+    var pendingSel = null;
+
+    var addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.id = "airs-add-note";
+    addBtn.textContent = "Add note";
+    addBtn.hidden = true;
+    document.body.appendChild(addBtn);
+
+    function canWrite() { return isLive && enabled && !stopped; }
+
+    function el(tag, cls, text) {
+      var e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    }
+
+    function blocks() {
+      var all = article.querySelectorAll(BLOCKS), out = [];
+      for (var i = 0; i < all.length; i++) if (!all[i].closest(SKIP)) out.push(all[i]);
+      return out;
+    }
+
+    function blockOf(node) {
+      var e = node && (node.nodeType === 1 ? node : node.parentElement);
+      if (!e || e.closest(SKIP)) return null;
+      var b = e.closest(BLOCKS);
+      return b && b !== article && article.contains(b) ? b : null;
+    }
+
+    function fingerprint(b) {
+      var c = b.cloneNode(true);
+      var skip = c.querySelectorAll(SKIP);
+      for (var i = 0; i < skip.length; i++) skip[i].remove();
+      return Array.from(c.textContent.replace(/\s+/g, " ").trim()).slice(0, 80).join("");
+    }
+
+    // The nearest heading at or above position i in the block list.
+    function sectionAt(bl, i) {
+      for (var j = Math.min(i, bl.length - 1); j >= 0; j--) {
+        if (/^H[1-6]$/.test(bl[j].tagName)) return { id: bl[j].id || "", text: bl[j].textContent.trim() };
+      }
+      return { id: "", text: "" };
+    }
+
+    function anchorFor(b) {
+      var bl = blocks();
+      var i = bl.indexOf(b);
+      var sec = sectionAt(bl, i);
+      return { block: fingerprint(b), index: i, section: sec.id, heading: sec.text || doc.title || "" };
+    }
+
+    function findBlock(a, bl, fps) {
+      if (a.block) {
+        for (var i = 0; i < bl.length; i++) if (fps[i] === a.block) return bl[i];
+      }
+      if (a.index >= 0 && a.index < bl.length && sectionAt(bl, a.index).id === (a.section || "")) return bl[a.index];
+      if (a.section) {
+        var h = document.getElementById(a.section);
+        if (h && article.contains(h) && !h.closest(SKIP)) return h;
+      }
+      return null;
+    }
+
+    // Insert node after b and after any notes already placed there.
+    function insertAfter(b, node) {
+      var ref = b.nextSibling;
+      while (ref && ref.nodeType === 1 && ref.classList.contains("airs-note")) ref = ref.nextSibling;
+      b.parentNode.insertBefore(node, ref);
+    }
+
+    function fmtTime(iso) {
+      var d = new Date(iso);
+      if (!iso || isNaN(d)) return "";
+      return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    }
+
+    function card(n) {
+      var c = el("div", "airs-note");
+      c.dataset.id = n.id;
+      if (n.quote) c.appendChild(el("div", "airs-note-quote", n.quote));
+      if (n.text || !n.quote) c.appendChild(el("div", "airs-note-text", n.text || "(empty note)"));
+      var t = fmtTime(n.time);
+      if (n.edited) t += " · edited " + fmtTime(n.edited);
+      c.appendChild(el("div", "airs-note-time", t));
+      return c;
+    }
+
+    function cardFor(id) {
+      var cs = article.querySelectorAll(".airs-note");
+      for (var i = 0; i < cs.length; i++) if (cs[i].dataset.id === id) return cs[i];
+      return null;
+    }
+
+    function render() {
+      var old = article.querySelectorAll(".airs-note,.airs-notes-unplaced");
+      for (var i = 0; i < old.length; i++) old[i].remove();
+      var bl = blocks(), fps = bl.map(fingerprint), unplaced = [];
+      list.forEach(function (n) {
+        var b = findBlock(n, bl, fps);
+        if (b) insertAfter(b, card(n));
+        else unplaced.push(n);
+      });
+      if (unplaced.length) {
+        var sec = el("section", "airs-notes-unplaced");
+        sec.appendChild(el("h3", null, "Notes"));
+        unplaced.forEach(function (n) { sec.appendChild(card(n)); });
+        article.appendChild(sec);
+      }
+    }
+
+    function upsert(n) {
+      for (var i = 0; i < list.length; i++) if (list[i].id === n.id) { list[i] = n; return; }
+      list.push(n);
+    }
+
+    function truncQuote(s) {
+      s = s.trim();
+      var enc = new TextEncoder();
+      if (enc.encode(s).length <= MAX_QUOTE) return s;
+      var cps = Array.from(s);
+      while (cps.length && enc.encode(cps.join("") + "…").length > MAX_QUOTE) cps.pop();
+      return cps.join("") + "…";
+    }
+
+    // --- the note box ---
+
+    function makeBox(mode, quote, text) {
+      var b = { mode: mode, quote: quote, saving: false, showCard: false };
+      b.el = el("div", "airs-note-box");
+      if (quote) b.el.appendChild(el("div", "airs-note-quote", quote));
+      b.ta = el("textarea");
+      b.ta.rows = 3;
+      b.ta.placeholder = "Write a note — type, or write with Apple Pencil";
+      b.ta.value = text || "";
+      b.el.appendChild(b.ta);
+      b.status = el("div", "airs-note-status");
+      b.status.hidden = true;
+      b.el.appendChild(b.status);
+      b.err = el("div", "airs-note-error");
+      b.err.hidden = true;
+      b.el.appendChild(b.err);
+      var actions = el("div", "airs-note-actions");
+      var cancel = el("button", "airs-note-cancel", "Cancel");
+      cancel.type = "button";
+      b.save = el("button", "airs-note-save", "Save");
+      b.save.type = "button";
+      actions.appendChild(cancel);
+      actions.appendChild(b.save);
+      b.el.appendChild(actions);
+      cancel.addEventListener("click", closeBox);
+      b.save.addEventListener("click", save);
+      b.ta.addEventListener("keydown", function (e) {
+        if (e.key === "Escape") closeBox();
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) save();
+      });
+      return b;
+    }
+
+    function placeBox() {
+      if (!box) return;
+      if (box.mode === "edit") {
+        var c = cardFor(box.id);
+        if (c) {
+          c.hidden = !box.showCard;
+          c.parentNode.insertBefore(box.el, box.showCard ? c.nextSibling : c);
+          return;
+        }
+      }
+      var bl = blocks();
+      var b = findBlock(box.anchor, bl, bl.map(fingerprint));
+      if (b) insertAfter(b, box.el);
+      else article.appendChild(box.el);
+    }
+
+    function closeBox() {
+      if (!box) return;
+      box.el.remove();
+      box = null;
+      var hidden = article.querySelectorAll(".airs-note[hidden]");
+      for (var i = 0; i < hidden.length; i++) hidden[i].hidden = false;
+    }
+
+    // A box holding unsaved text is never replaced: focus it instead.
+    function keepDirtyBox() {
+      if (!box) return false;
+      var start = box.mode === "edit" ? box.was : "";
+      if (box.ta.value.trim() === String(start || "").trim()) return false;
+      box.ta.focus();
+      return true;
+    }
+
+    function openAdd(b, quote) {
+      if (keepDirtyBox()) return;
+      closeBox();
+      box = makeBox("add", quote, "");
+      box.anchor = anchorFor(b);
+      insertAfter(b, box.el);
+      update();
+      box.ta.focus();
+    }
+
+    function openEdit(id) {
+      var n = null;
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) n = list[i];
+      if (!n || keepDirtyBox()) return;
+      closeBox();
+      box = makeBox("edit", n.quote, n.text);
+      box.id = id;
+      box.was = n.text;
+      box.anchor = { block: n.block, index: n.index, section: n.section };
+      placeBox();
+      update();
+      box.ta.focus();
+    }
+
+    function showErr(msg) {
+      if (!box) return;
+      box.err.textContent = msg;
+      box.err.hidden = !msg;
+    }
+
+    function save() {
+      if (!box || box.saving || !canWrite()) return update();
+      var b = box;
+      var text = b.ta.value;
+      var body = b.mode === "add"
+        ? { block: b.anchor.block, index: b.anchor.index, section: b.anchor.section, heading: b.anchor.heading, quote: b.quote || "", text: text }
+        : { id: b.id, was: b.was, text: text };
+      b.saving = true;
+      showErr("");
+      update();
+      fetch(notesURL, {
+        method: b.mode === "add" ? "POST" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
+      }).then(function (res) {
+        b.saving = false;
+        var r = res.r, d = res.d;
+        if (r.ok) {
+          upsert(d);
+          if (box === b) closeBox();
+          render();
+          placeBox();
+        } else if (r.status === 409 && d.note) {
+          b.was = d.note.text;
+          b.showCard = true;
+          upsert(d.note);
+          render();
+          placeBox();
+          showErr("Changed on the Mac — showing the new version");
+        } else if (r.status === 410) {
+          stop();
+        } else {
+          showErr("Couldn't save — " + String(d.error || "error " + r.status).replace(/^couldn't save note: /, ""));
+        }
+        update();
+      }).catch(function () {
+        b.saving = false;
+        showErr("Couldn't save — not connected");
+        update();
+      });
+    }
+
+    // Reflect whether notes can be written right now.
+    function update() {
+      var ok = canWrite();
+      article.classList.toggle("airs-notes-on", ok);
+      if (!ok) addBtn.hidden = true;
+      if (!box) return;
+      box.save.disabled = !ok || box.saving;
+      var msg = "";
+      if (!isLive) msg = "Offline — your note is kept here until the connection is back";
+      else if (!enabled) msg = "Notes can't be saved from this network";
+      box.status.textContent = msg;
+      box.status.hidden = !msg;
+    }
+
+    // --- input ---
+
+    article.addEventListener("pointerdown", function (e) { lastPointer = e.pointerType || "mouse"; }, true);
+
+    article.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t.closest) return;
+      var c = t.closest(".airs-note");
+      if (c && article.contains(c)) {
+        if (canWrite() && c.dataset.id) openEdit(c.dataset.id);
+        return;
+      }
+      if (t.closest("a,button,input,textarea,select,label,summary,.airs-note-box")) return;
+      var sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.toString().trim()) return;
+      if (box) {
+        if (!box.ta.value.trim()) closeBox(); // tapping away closes an empty box
+        return;
+      }
+      if (lastPointer !== "touch" && lastPointer !== "pen") return; // mouse clicks never open a box
+      if (!canWrite()) return;
+      var b = blockOf(t);
+      if (b) openAdd(b, "");
+    });
+
+    function onSelection() {
+      var sel = window.getSelection();
+      if (!canWrite() || !sel || sel.isCollapsed || !sel.rangeCount) { addBtn.hidden = true; return; }
+      var text = sel.toString().trim();
+      var range = sel.getRangeAt(0);
+      var b = blockOf(range.startContainer);
+      if (!text || !b) { addBtn.hidden = true; return; }
+      pendingSel = { quote: truncQuote(text), block: b };
+      var rect = range.getBoundingClientRect();
+      addBtn.hidden = false;
+      var w = addBtn.offsetWidth || 110;
+      addBtn.style.left = Math.max(8, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 8)) + "px";
+      addBtn.style.top = Math.max(8, Math.min(rect.bottom + 10, window.innerHeight - 60)) + "px";
+    }
+    document.addEventListener("selectionchange", onSelection);
+    window.addEventListener("scroll", function () { if (!addBtn.hidden) onSelection(); }, { passive: true });
+
+    addBtn.addEventListener("pointerdown", function (e) { e.preventDefault(); }); // keep the selection
+    addBtn.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    addBtn.addEventListener("click", function () {
+      if (!pendingSel || !canWrite()) return;
+      var p = pendingSel;
+      pendingSel = null;
+      addBtn.hidden = true;
+      var sel = window.getSelection();
+      if (sel) sel.removeAllRanges();
+      openAdd(p.block, p.quote);
+    });
+
+    render();
+    update();
+
+    return {
+      update: update,
+      beforeReplace: function () { if (box) box.el.remove(); },
+      afterReplace: function (newList, newEnabled) {
+        list = newList;
+        enabled = newEnabled;
+        render();
+        placeBox();
+        update();
+      },
+    };
+  })();
 
   // --- downloads (work without the server) ---
 
@@ -161,6 +548,11 @@
         cloneImgs[i].removeAttribute("srcset");
       } catch (e) { /* cross-origin or unsupported: keep original src */ }
     }
+    // Notes are part of the saved page; the editing box is not.
+    var boxes = clone.querySelectorAll(".airs-note-box");
+    for (var j = 0; j < boxes.length; j++) boxes[j].remove();
+    var hidden = clone.querySelectorAll(".airs-note[hidden]");
+    for (var k = 0; k < hidden.length; k++) hidden[k].removeAttribute("hidden");
     var style = document.getElementById("airs-style");
     var html = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" +
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
@@ -180,5 +572,6 @@
   if (dlHTML) dlHTML.addEventListener("click", downloadHTML);
   if (dlMD) dlMD.addEventListener("click", downloadMD);
 
+  setLive(false);
   connect();
 })();

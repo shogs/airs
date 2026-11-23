@@ -182,7 +182,7 @@ func TestPostNoteReadOnlyFolder(t *testing.T) {
 	os.Chmod(f.dir, 0o555)
 	t.Cleanup(func() { os.Chmod(f.dir, 0o755) })
 	code, m := f.send(t, "POST", notesURL(t, f, "notes.md", ""), remote, goodNote, nil)
-	if code != 500 || !strings.HasPrefix(m["error"].(string), "couldn't save note:") {
+	if code != 500 || m["error"] != "couldn't save note: permission denied" {
 		t.Fatalf("%d %v", code, m)
 	}
 }
