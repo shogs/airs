@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,8 +56,18 @@ const remote = "192.168.1.50:5000"
 
 func (f *fixture) get(t *testing.T, path, from string) (int, http.Header, string) {
 	t.Helper()
+	return f.getVia(t, path, from, "192.168.1.20:7777", "192.168.1.20:7777")
+}
+
+// getVia sends a request that arrived on local address `via` with Host `host`.
+func (f *fixture) getVia(t *testing.T, path, from, via, host string) (int, http.Header, string) {
+	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
 	req.RemoteAddr = from
+	req.Host = host
+	if la, err := net.ResolveTCPAddr("tcp", via); err == nil {
+		req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, la))
+	}
 	rec := httptest.NewRecorder()
 	f.h.ServeHTTP(rec, req)
 	b, _ := io.ReadAll(rec.Body)
@@ -198,6 +210,74 @@ func TestQRRoute(t *testing.T) {
 	for _, u := range []string{"https://evil.com", "//evil.com/x", ""} {
 		if code, _, _ := f.get(t, "/_airs/qr?u="+u, remote); code != 400 {
 			t.Errorf("%q: %d", u, code)
+		}
+	}
+}
+
+// A shared single file exposes only the images it references, not every
+// image under its folder.
+func TestAssetOnlyReferencedImages(t *testing.T) {
+	f := newFixture(t)
+	mkfile(t, filepath.Join(f.dir, "images", "a.png"))
+	mkfile(t, filepath.Join(f.dir, "Private", "deep", "passport.jpg"))
+	mkfile(t, filepath.Join(f.dir, "other.png"))
+	os.WriteFile(filepath.Join(f.dir, "notes.md"), []byte("# N\n\n![](img.png)\n\n![a](images/a.png)\n"), 0o644)
+	for p, want := range map[string]int{
+		"/_airs/asset/notes.md/img.png":                   200,
+		"/_airs/asset/notes.md/images/a.png":              200,
+		"/_airs/asset/notes.md/Private/deep/passport.jpg": 404,
+		"/_airs/asset/notes.md/other.png":                 404,
+	} {
+		if code, _, _ := f.get(t, p, remote); code != want {
+			t.Errorf("%s: %d want %d", p, code, want)
+		}
+	}
+}
+
+// Trust applies to the trusted network only, not to other interfaces such as
+// a VPN or Tailscale.
+func TestTrustOnlyOnTrustedInterface(t *testing.T) {
+	f := newFixture(t)
+	if code, _, _ := f.getVia(t, "/notes.md", "100.64.0.9:5000", "100.64.0.5:7777", "100.64.0.5:7777"); code != 403 {
+		t.Fatalf("other interface: %d", code)
+	}
+	if code, _, _ := f.getVia(t, "/notes.md", remote, "192.168.1.20:7777", "192.168.1.20:7777"); code != 200 {
+		t.Fatalf("trusted interface: %d", code)
+	}
+	_, _, idx := f.getVia(t, "/", "100.64.0.9:5000", "100.64.0.5:7777", "100.64.0.5:7777")
+	if strings.Contains(idx, "notes.md") {
+		t.Fatal("index lists items on another interface")
+	}
+}
+
+// Opening the printed LAN link on the Mac itself works on untrusted networks.
+func TestOwnAddressAllowedWhenUntrusted(t *testing.T) {
+	own := ""
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && !n.IP.IsLoopback() && n.IP.To4() != nil {
+			own = n.IP.String()
+		}
+	}
+	if own == "" {
+		t.Skip("no non-loopback IPv4 address")
+	}
+	f := newFixture(t)
+	f.ns.Set(netinfo.Info{LocalIP: own}, false)
+	if code, _, _ := f.getVia(t, "/notes.md", own+":5000", own+":7777", own+":7777"); code != 200 {
+		t.Fatalf("%d", code)
+	}
+}
+
+// DNS rebinding: a web page cannot reach airs through its own domain name.
+func TestRejectsForeignHost(t *testing.T) {
+	f := newFixture(t)
+	for host, want := range map[string]int{
+		"evil.example:7777": 403, "evil.example": 403,
+		"localhost:7777": 200, "127.0.0.1:7777": 200, "mymac.local:7777": 200, "[::1]:7777": 200,
+	} {
+		if code, _, _ := f.getVia(t, "/notes.md", "127.0.0.1:5000", "127.0.0.1:7777", host); code != want {
+			t.Errorf("host %s: %d want %d", host, code, want)
 		}
 	}
 }

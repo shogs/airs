@@ -88,3 +88,10 @@ func TestIsImage(t *testing.T) {
 		t.Error("non-image")
 	}
 }
+
+func TestImagesListed(t *testing.T) {
+	d := md(t, "![](img/a.png)\n\n![](https://x/y.png)\n\n![](b.png)\n", Options{AssetPrefix: "/p/"})
+	if len(d.Images) != 2 || d.Images[0] != "img/a.png" || d.Images[1] != "b.png" {
+		t.Fatalf("%v", d.Images)
+	}
+}

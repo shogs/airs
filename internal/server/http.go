@@ -42,12 +42,18 @@ func NewHTTP(store *state.Store, cfg config.Config, ns *NetState, hub *watch.Hub
 	mux.HandleFunc("GET /{slug}", s.item)
 	mux.HandleFunc("GET /{slug}/{rel...}", s.itemPath)
 	s.routesLive(mux)
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !hostAllowed(r.Host) {
+			http.Error(w, "airs: unexpected Host header", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func (s *httpServer) allowed(r *http.Request, it state.Item) bool {
-	_, trusted := s.ns.Get()
-	return Allowed(it, s.cfg, trusted, isLoopback(r))
+	info, trusted := s.ns.Get()
+	return Allowed(it, s.cfg, trusted && arrivedOn(r, info.LocalIP), isLocal(r))
 }
 
 func (s *httpServer) page(w http.ResponseWriter, status int, name string, data any) {
@@ -159,12 +165,36 @@ func (s *httpServer) asset(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w)
 		return
 	}
-	abs, err := Resolve(it, r.PathValue("rel"))
-	if err != nil || r.PathValue("rel") == "" {
+	rel := r.PathValue("rel")
+	abs, err := Resolve(it, rel)
+	if err != nil || rel == "" || !s.references(it, rel) {
 		s.notFound(w)
 		return
 	}
 	serveRaw(w, r, abs)
+}
+
+// references reports whether a single-file item's markdown links to image rel,
+// so sharing ~/Desktop/todo.md does not expose every image on the Desktop.
+func (s *httpServer) references(it state.Item, rel string) bool {
+	src, err := os.ReadFile(it.Path)
+	if err != nil {
+		return false
+	}
+	r, ok := render.ForPath(it.Path)
+	if !ok {
+		return false
+	}
+	d, err := r.Render(src, render.Options{})
+	if err != nil {
+		return false
+	}
+	for _, img := range d.Images {
+		if u, err := url.PathUnescape(img); err == nil && path.Clean(u) == path.Clean(rel) {
+			return true
+		}
+	}
+	return false
 }
 
 func serveRaw(w http.ResponseWriter, r *http.Request, abs string) {

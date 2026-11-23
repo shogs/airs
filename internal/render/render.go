@@ -11,6 +11,9 @@ import (
 type Doc struct {
 	HTML  template.HTML
 	Title string
+	// Images are the document's relative image references, as written
+	// (before AssetPrefix). Only these may be served beside a single file.
+	Images []string
 }
 
 // Options tune a render.

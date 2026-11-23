@@ -34,6 +34,7 @@ func (m markdownRenderer) Render(src []byte, opt Options) (Doc, error) {
 	src = bytes.ToValidUTF8(src, []byte("�"))
 	doc := m.md.Parser().Parse(text.NewReader(src))
 	title := ""
+	var images []string
 	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -44,8 +45,11 @@ func (m markdownRenderer) Render(src []byte, opt Options) (Doc, error) {
 				title = plainText(n, src)
 			}
 		case *ast.Image:
-			if opt.AssetPrefix != "" && isRelative(string(n.Destination)) {
-				n.Destination = []byte(opt.AssetPrefix + string(n.Destination))
+			if dest := string(n.Destination); isRelative(dest) {
+				images = append(images, dest)
+				if opt.AssetPrefix != "" {
+					n.Destination = []byte(opt.AssetPrefix + dest)
+				}
 			}
 		}
 		return ast.WalkContinue, nil
@@ -54,7 +58,7 @@ func (m markdownRenderer) Render(src []byte, opt Options) (Doc, error) {
 	if err := m.md.Renderer().Render(&buf, src, doc); err != nil {
 		return Doc{}, err
 	}
-	return Doc{HTML: template.HTML(buf.String()), Title: title}, nil
+	return Doc{HTML: template.HTML(buf.String()), Title: title, Images: images}, nil
 }
 
 func plainText(n ast.Node, src []byte) string {
