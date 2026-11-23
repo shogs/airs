@@ -22,6 +22,7 @@ import (
 const usage = `airs — read your markdown on other devices
 
   airs <file|folder> [--any]   share a file or folder (prints link + QR code)
+  airs add <file|folder>       same as above
   airs list                    what's shared
   airs remove <id|name>        stop sharing
   airs qr [id|name]            show a QR code (no argument: the index page)
@@ -82,6 +83,8 @@ func (c *cmd) dispatch(args []string) error {
 	case "help", "-h", "--help":
 		fmt.Fprint(c.out, usage)
 		return nil
+	case "add":
+		return c.add(rest, "usage: airs add <file|folder> [--any]")
 	case "list", "ls":
 		return c.list()
 	case "remove", "rm":
@@ -121,7 +124,7 @@ func (c *cmd) dispatch(args []string) error {
 	case "__serve":
 		return errUsage("__serve is internal")
 	}
-	return c.add(args)
+	return c.add(args, "usage: airs <file|folder> [--any]")
 }
 
 func oneArg(u string, rest []string) (string, error) {
@@ -150,7 +153,7 @@ func (c *cmd) connectIfShared() (*client.Client, error) {
 
 var errNothingShared = errors.New("nothing is being shared")
 
-func (c *cmd) add(args []string) error {
+func (c *cmd) add(args []string, usageMsg string) error {
 	var target string
 	any := false
 	for _, a := range args {
@@ -160,13 +163,13 @@ func (c *cmd) add(args []string) error {
 		case len(a) > 1 && a[0] == '-':
 			return errUsage("unknown flag " + a)
 		case target != "":
-			return errUsage("usage: airs <file|folder> [--any]")
+			return errUsage(usageMsg)
 		default:
 			target = a
 		}
 	}
 	if target == "" {
-		return errUsage("usage: airs <file|folder> [--any]")
+		return errUsage(usageMsg)
 	}
 	abs, err := canonical(target)
 	if err != nil {

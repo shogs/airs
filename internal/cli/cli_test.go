@@ -274,3 +274,14 @@ func TestHelp(t *testing.T) {
 		t.Fatalf("remove without arg: %d %s", code, errs)
 	}
 }
+
+func TestAddSubcommand(t *testing.T) {
+	e := setup(t, false)
+	out, errs, code := e.run(t, "add", e.file(t, "notes.md"), "--any")
+	if code != 0 || !strings.Contains(out, "serving notes.md") || strings.Contains(out, "isn't trusted") {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	if _, errs, code := e.run(t, "add"); code == 0 || !strings.Contains(errs, "usage: airs add <file|folder> [--any]") {
+		t.Fatalf("bare add: %d %q", code, errs)
+	}
+}
