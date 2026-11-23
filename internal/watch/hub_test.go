@@ -3,6 +3,7 @@ package watch
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -64,7 +65,21 @@ func TestFileWriteEmitsChange(t *testing.T) {
 	write(t, f, "c")
 	write(t, f, "d")
 	expect(t, ch, Change)
-	expectNone(t, ch, 200*time.Millisecond)
+	// A burst is coalesced; FSEvents may deliver a straggler in a later batch,
+	// which costs one extra re-render at most.
+	n := 0
+	deadline := time.After(500 * time.Millisecond)
+	for done := false; !done; {
+		select {
+		case <-ch:
+			n++
+		case <-deadline:
+			done = true
+		}
+	}
+	if n > 1 {
+		t.Fatalf("burst of 3 writes produced %d extra events", n)
+	}
 }
 
 func TestAtomicRenameSaveRepeated(t *testing.T) {
@@ -159,4 +174,85 @@ func TestMissingDirStillSubscribable(t *testing.T) {
 	ch, cancel := h.Subscribe(3)
 	defer cancel()
 	expectNone(t, ch, 100*time.Millisecond)
+}
+
+func TestSubdirRecreated(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "sub"), 0o755)
+	h := newHub(t)
+	h.Watch(2, dir, true)
+	ch, cancel := h.Subscribe(2)
+	defer cancel()
+	os.RemoveAll(filepath.Join(dir, "sub"))
+	os.Mkdir(filepath.Join(dir, "sub"), 0o755)
+	expect(t, ch, Change)
+	time.Sleep(200 * time.Millisecond)
+	for len(ch) > 0 {
+		<-ch
+	}
+	write(t, filepath.Join(dir, "sub", "a.md"), "x")
+	expect(t, ch, Change)
+}
+
+func TestMissingRootAppears(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "out")
+	h := newHub(t)
+	h.Watch(3, root, true)
+	ch, cancel := h.Subscribe(3)
+	defer cancel()
+	os.MkdirAll(root, 0o755)
+	write(t, filepath.Join(root, "a.md"), "x")
+	expect(t, ch, Change)
+	time.Sleep(200 * time.Millisecond)
+	for len(ch) > 0 {
+		<-ch
+	}
+	write(t, filepath.Join(root, "a.md"), "y")
+	expect(t, ch, Change)
+}
+
+func TestRootRecreated(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "out")
+	os.MkdirAll(root, 0o755)
+	h := newHub(t)
+	h.Watch(3, root, true)
+	ch, cancel := h.Subscribe(3)
+	defer cancel()
+	os.RemoveAll(root)
+	os.MkdirAll(root, 0o755)
+	time.Sleep(300 * time.Millisecond)
+	for len(ch) > 0 {
+		<-ch
+	}
+	write(t, filepath.Join(root, "a.md"), "x")
+	expect(t, ch, Change)
+}
+
+func openFDs(t *testing.T) int {
+	ents, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		t.Skip("no /dev/fd")
+	}
+	return len(ents)
+}
+
+// Watching a big folder (a repo with node_modules) must not use a file
+// descriptor per file.
+func TestLargeFolderUsesFewFDs(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 50; i++ {
+		sub := filepath.Join(dir, "d"+strconv.Itoa(i))
+		os.Mkdir(sub, 0o755)
+		for j := 0; j < 100; j++ {
+			os.WriteFile(filepath.Join(sub, strconv.Itoa(j)), nil, 0o644)
+		}
+	}
+	before := openFDs(t)
+	h := newHub(t)
+	if err := h.Watch(4, dir, true); err != nil {
+		t.Fatal(err)
+	}
+	if after := openFDs(t); after-before > 50 {
+		t.Fatalf("watching 5000 files opened %d descriptors", after-before)
+	}
 }
