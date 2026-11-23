@@ -188,3 +188,16 @@ func TestStaticAppJS(t *testing.T) {
 		t.Fatalf("%d %s", code, h.Get("Content-Type"))
 	}
 }
+
+func TestQRRoute(t *testing.T) {
+	f := newFixture(t)
+	code, h, body := f.get(t, "/_airs/qr?u=/notes.md", remote)
+	if code != 200 || h.Get("Content-Type") != "image/png" || !strings.HasPrefix(body, "\x89PNG") || h.Get("Cache-Control") != "no-store" {
+		t.Fatalf("%d %v", code, h)
+	}
+	for _, u := range []string{"https://evil.com", "//evil.com/x", ""} {
+		if code, _, _ := f.get(t, "/_airs/qr?u="+u, remote); code != 400 {
+			t.Errorf("%q: %d", u, code)
+		}
+	}
+}

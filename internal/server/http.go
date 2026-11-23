@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"airs/internal/config"
+	"airs/internal/qr"
 	"airs/internal/render"
 	"airs/internal/state"
 	"airs/internal/watch"
@@ -36,6 +37,7 @@ func NewHTTP(store *state.Store, cfg config.Config, ns *NetState, hub *watch.Hub
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.Handle("GET /_airs/static/", http.StripPrefix("/_airs/static/", http.FileServer(web.Static)))
 	mux.HandleFunc("GET /_airs/asset/{slug}/{rel...}", s.asset)
+	mux.HandleFunc("GET /_airs/qr", s.qrPNG)
 	mux.HandleFunc("GET /_airs/", func(w http.ResponseWriter, r *http.Request) { s.notFound(w) })
 	mux.HandleFunc("GET /{slug}", s.item)
 	mux.HandleFunc("GET /{slug}/{rel...}", s.itemPath)
@@ -307,4 +309,22 @@ func (s *httpServer) renderPage(w http.ResponseWriter, it state.Item, rel string
 func docJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
 	return template.JS(b)
+}
+
+// qrPNG encodes BaseURL + u. Only paths on this server are accepted.
+func (s *httpServer) qrPNG(w http.ResponseWriter, r *http.Request) {
+	u := r.URL.Query().Get("u")
+	if !strings.HasPrefix(u, "/") || strings.HasPrefix(u, "//") {
+		http.Error(w, "u must be a path on this server", http.StatusBadRequest)
+		return
+	}
+	info, _ := s.ns.Get()
+	png, err := qr.PNG(BaseURL(info, s.cfg.Port)+u, 256)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Write(png)
 }
