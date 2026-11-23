@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
+	"time"
 
 	"airs/internal/api"
 	"airs/internal/client"
@@ -315,9 +317,29 @@ func (c *cmd) stop() error {
 	if err != nil {
 		return err
 	}
+	st, err := cl.Status()
+	if err != nil {
+		return err
+	}
 	if err := cl.Stop(); err != nil {
 		return err
 	}
+	// Return only once the daemon has exited, so a command right after `stop`
+	// starts a fresh one instead of reaching the one shutting down.
+	waitExit(st.PID, 5*time.Second)
 	fmt.Fprintln(c.out, "airs stopped (your list is kept for next time)")
 	return nil
+}
+
+func waitExit(pid int, max time.Duration) {
+	if pid <= 0 || pid == os.Getpid() { // in-process daemon (tests)
+		return
+	}
+	deadline := time.Now().Add(max)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }

@@ -64,7 +64,11 @@ func TestEndToEnd(t *testing.T) {
 		resp.Body.Close()
 		return resp.StatusCode
 	}
-	defer airs("stop")
+	defer func() {
+		airs("stop")
+		label := client.Label(paths.Dirs{State: stateDir})
+		exec.Command("/bin/launchctl", "bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run()
+	}()
 	logTail := func() string { b, _ := os.ReadFile(filepath.Join(stateDir, "airs.log")); return string(b) }
 
 	if out, code := airs("notes.md"); code != 0 || !strings.Contains(out, "serving notes.md") {
@@ -122,17 +126,52 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(logTail(), "launchctl bootstrap failed") {
 		t.Log("note: daemon was started directly (launchctl unavailable here)")
-		return
 	}
-	// The daemon unloads its transient launchd job when it exits.
-	label := client.Label(paths.Dirs{State: stateDir})
-	deadline := time.Now().Add(2 * time.Second)
-	for exec.Command("/bin/launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run() == nil {
-		if time.Now().After(deadline) {
-			exec.Command("/bin/launchctl", "bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run()
-			t.Fatalf("launchd job %s still loaded after the daemon exited", label)
+
+	// stop followed immediately by another command (e.g. after editing the
+	// config) must leave a working daemon.
+	airs("notes.md")
+	for i := 0; i < 3; i++ {
+		if out, code := airs("stop"); code != 0 {
+			t.Fatalf("stop %d: %s", i, out)
 		}
-		time.Sleep(100 * time.Millisecond)
+		if out, code := airs("list"); code != 0 || !strings.Contains(out, "notes.md") {
+			t.Fatalf("list right after stop (%d): %d %s\nlog: %s", i, code, out, logTail())
+		}
+		if c := get("/notes.md"); c != 200 {
+			t.Fatalf("GET right after stop+list (%d): %d\nlog: %s", i, c, logTail())
+		}
+	}
+	airs("stop")
+
+	// Two first starts at once both succeed.
+	os.WriteFile(filepath.Join(home, "a.md"), []byte("# A\n"), 0o644)
+	os.WriteFile(filepath.Join(home, "b.md"), []byte("# B\n"), 0o644)
+	airs("remove", "notes.md")
+	type res struct {
+		out  string
+		code int
+	}
+	results := make(chan res, 2)
+	for _, f := range []string{"a.md", "b.md"} {
+		go func(f string) {
+			cmd := exec.Command(bin, f)
+			cmd.Env, cmd.Dir = env, home
+			out, err := cmd.CombinedOutput()
+			code := 0
+			if ee, ok := err.(*exec.ExitError); ok {
+				code = ee.ExitCode()
+			}
+			results <- res{string(out), code}
+		}(f)
+	}
+	for i := 0; i < 2; i++ {
+		if r := <-results; r.code != 0 {
+			t.Fatalf("concurrent start: %d %s\nlog: %s", r.code, r.out, logTail())
+		}
+	}
+	if out, _ := airs("list"); !strings.Contains(out, "a.md") || !strings.Contains(out, "b.md") {
+		t.Fatalf("after concurrent start:\n%s", out)
 	}
 }
 

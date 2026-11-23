@@ -8,14 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"airs/internal/paths"
 )
-
-// LabelEnv tells a launchd-started daemon its job label so it can unload the
-// job when it exits.
-const LabelEnv = "AIRS_LAUNCHD_LABEL"
 
 // Label is the launchd job label for a state directory (unique per HOME, so
 // tests never touch a real instance).
@@ -26,7 +23,8 @@ func Label(dirs paths.Dirs) string {
 
 const maxLog = 1 << 20
 
-// startDaemon starts `airs __serve` through launchd: on recent macOS only
+// startDaemon starts `airs __serve` through a transient launchd job (not a
+// login item: it lives only in this login session): on recent macOS only
 // processes started by launchd (or a shell) can read the router's MAC address,
 // which the network-trust check needs. If launchctl fails, the daemon is
 // started directly; it then cannot identify networks and treats all as
@@ -48,9 +46,23 @@ func startDaemon(dirs paths.Dirs) error {
 		return err
 	}
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	exec.Command("/bin/launchctl", "bootout", domain+"/"+label).Run() // leftover job, if any
+	target := domain + "/" + label
+	// The job stays loaded (idle) after the daemon exits. Never boot out a
+	// running one: it may be a daemon another airs command just started, or one
+	// that is still shutting down; Connect waits for its socket either way.
+	if info, err := exec.Command("/bin/launchctl", "print", target).Output(); err == nil {
+		if strings.Contains(string(info), "state = running") {
+			return nil
+		}
+		exec.Command("/bin/launchctl", "bootout", target).Run() // reload with a fresh plist
+	}
 	out, err := exec.Command("/bin/launchctl", "bootstrap", domain, plist).CombinedOutput()
 	if err == nil {
+		return nil
+	}
+	// Another airs command may have loaded the job in the meantime.
+	if exec.Command("/bin/launchctl", "print", target).Run() == nil {
+		exec.Command("/bin/launchctl", "kickstart", target).Run() // no -k: never kills a running daemon
 		return nil
 	}
 	appendLog(dirs, fmt.Sprintf("launchctl bootstrap failed (%v: %s); starting directly", err, out))
@@ -91,7 +103,6 @@ func plistXML(label, exe string, dirs paths.Dirs) string {
 		"XDG_CONFIG_HOME": filepath.Dir(dirs.Config),
 		"XDG_STATE_HOME":  filepath.Dir(dirs.State),
 		"PATH":            "/usr/bin:/bin:/usr/sbin:/sbin",
-		LabelEnv:          label,
 	}
 	e := html.EscapeString
 	s := `<?xml version="1.0" encoding="UTF-8"?>
@@ -102,13 +113,12 @@ func plistXML(label, exe string, dirs paths.Dirs) string {
   <key>ProgramArguments</key><array><string>` + e(exe) + `</string><string>__serve</string></array>
   <key>EnvironmentVariables</key><dict>
 `
-	for _, k := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH", LabelEnv} {
+	for _, k := range []string{"HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "PATH"} {
 		s += "    <key>" + k + "</key><string>" + e(env[k]) + "</string>\n"
 	}
 	s += `  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>
-  <key>AbandonProcessGroup</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>StandardOutPath</key><string>` + e(dirs.Log()) + `</string>
   <key>StandardErrorPath</key><string>` + e(dirs.Log()) + `</string>

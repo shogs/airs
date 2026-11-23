@@ -2,16 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/signal"
 	"runtime"
 	"syscall"
 
 	"airs/internal/cli"
-	"airs/internal/client"
 	"airs/internal/config"
 	"airs/internal/netinfo"
 	"airs/internal/paths"
@@ -55,13 +52,5 @@ func serve() int {
 		}
 		return 0
 	}()
-	// Started by launchd: unload our transient job so nothing is left behind.
-	// The helper runs in its own session so launchd does not kill it along with
-	// our process group when we exit.
-	if label := os.Getenv(client.LabelEnv); label != "" {
-		cmd := exec.Command("/bin/launchctl", "bootout", fmt.Sprintf("gui/%d/%s", os.Getuid(), label))
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-		cmd.Start()
-	}
 	return code
 }

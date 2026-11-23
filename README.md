@@ -37,8 +37,9 @@ shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
 
 ## How it works
 
-- **Background server.** The first command starts a small server through launchd. Nothing is
-  installed as a login item. The server stops on its own once nothing is shared.
+- **Background server.** The first command starts a small server through a transient launchd
+  job. It isn't a login item and is gone when you log out. The server stops on its own once
+  nothing is shared.
 - **Live reload.** Open pages update as soon as the file changes on disk, and your scroll
   position is kept.
 - **Keep reading.** If the server stops, the item is removed, or the file is deleted, the open
