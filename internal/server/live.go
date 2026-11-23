@@ -57,7 +57,7 @@ func (s *httpServer) renderJSON(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d, err := s.renderDoc(it, r.PathValue("rel"))
+	d, err := s.renderDoc(r, it, r.PathValue("rel"))
 	if errors.Is(err, ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]bool{"missing": true})
 		return

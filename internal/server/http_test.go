@@ -49,7 +49,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(func() { hub.Close() })
 	ns := &NetState{}
 	ns.Set(netinfo.Info{LocalIP: "192.168.1.20"}, true)
-	return &fixture{h: NewHTTP(store, config.Config{Port: 7777}, ns, hub), store: store, ns: ns, dir: dir, hub: hub}
+	return &fixture{h: NewHTTP(store, config.Config{Port: 7777, Notes: true}, ns, hub), store: store, ns: ns, dir: dir, hub: hub}
 }
 
 const remote = "192.168.1.50:5000"

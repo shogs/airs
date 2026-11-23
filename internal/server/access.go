@@ -19,6 +19,13 @@ func Allowed(item state.Item, cfg config.Config, trusted, local bool) bool {
 	return local || trusted || cfg.AnyNetwork || item.AnyNetwork
 }
 
+// CanWrite decides whether a request may add or edit notes. Unlike reading,
+// a per-item --any never grants it: only this Mac, the trusted network, or a
+// config that turns the network check off everywhere.
+func CanWrite(cfg config.Config, trusted, local bool) bool {
+	return local || trusted || cfg.AnyNetwork
+}
+
 // NetState is the current network and whether it is trusted.
 type NetState struct {
 	mu      sync.Mutex

@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"airs/internal/config"
+	"airs/internal/notes"
 	"airs/internal/qr"
 	"airs/internal/render"
 	"airs/internal/state"
@@ -54,6 +55,17 @@ func NewHTTP(store *state.Store, cfg config.Config, ns *NetState, hub *watch.Hub
 func (s *httpServer) allowed(r *http.Request, it state.Item) bool {
 	info, trusted := s.ns.Get()
 	return Allowed(it, s.cfg, trusted && arrivedOn(r, info.LocalIP), isLocal(r))
+}
+
+func (s *httpServer) canWrite(r *http.Request) bool {
+	info, trusted := s.ns.Get()
+	return CanWrite(s.cfg, trusted && arrivedOn(r, info.LocalIP), isLocal(r))
+}
+
+// notesOn reports whether notes are switched on for the document at docAbs.
+func (s *httpServer) notesOn(it state.Item, docAbs string) bool {
+	_, md := render.ForPath(docAbs)
+	return s.cfg.Notes && !it.NoNotes && md && !notes.IsNotesFile(docAbs)
 }
 
 func (s *httpServer) page(w http.ResponseWriter, status int, name string, data any) {
@@ -115,7 +127,7 @@ func (s *httpServer) item(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, ItemPath(it), http.StatusMovedPermanently)
 		return
 	}
-	s.renderPage(w, it, "")
+	s.renderPage(w, r, it, "")
 }
 
 func (s *httpServer) itemPath(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +161,7 @@ func (s *httpServer) itemPath(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w)
 	default:
 		if _, ok := render.ForPath(abs); ok {
-			s.renderPage(w, it, rel)
+			s.renderPage(w, r, it, rel)
 			return
 		}
 		serveRaw(w, r, abs)
@@ -278,12 +290,14 @@ func escapeRel(rel string) string {
 
 // renderedDoc is the shared result used by full pages and live-reload JSON.
 type renderedDoc struct {
-	HTML     template.HTML `json:"html"`
-	Title    string        `json:"title"`
-	Markdown string        `json:"markdown"`
+	HTML         template.HTML `json:"html"`
+	Title        string        `json:"title"`
+	Markdown     string        `json:"markdown"`
+	NotesEnabled bool          `json:"notesEnabled"` // this request may add/edit notes
+	Notes        []notes.Note  `json:"notes"`
 }
 
-func (s *httpServer) renderDoc(it state.Item, rel string) (renderedDoc, error) {
+func (s *httpServer) renderDoc(r *http.Request, it state.Item, rel string) (renderedDoc, error) {
 	abs, err := Resolve(it, rel)
 	if err != nil {
 		return renderedDoc{}, err
@@ -292,7 +306,7 @@ func (s *httpServer) renderDoc(it state.Item, rel string) (renderedDoc, error) {
 	if err != nil {
 		return renderedDoc{}, ErrNotFound
 	}
-	r, ok := render.ForPath(abs)
+	rd, ok := render.ForPath(abs)
 	if !ok {
 		return renderedDoc{}, ErrNotFound
 	}
@@ -300,7 +314,7 @@ func (s *httpServer) renderDoc(it state.Item, rel string) (renderedDoc, error) {
 	if !it.IsDir {
 		opt.AssetPrefix = "/_airs/asset/" + url.PathEscape(it.Slug) + "/"
 	}
-	d, err := r.Render(src, opt)
+	d, err := rd.Render(src, opt)
 	if err != nil {
 		return renderedDoc{}, err
 	}
@@ -308,11 +322,22 @@ func (s *httpServer) renderDoc(it state.Item, rel string) (renderedDoc, error) {
 	if title == "" {
 		title = filepath.Base(abs)
 	}
-	return renderedDoc{HTML: d.HTML, Title: title, Markdown: string(src)}, nil
+	doc := renderedDoc{HTML: d.HTML, Title: title, Markdown: string(src), Notes: []notes.Note{}}
+	if s.notesOn(it, abs) {
+		ns, err := notes.Read(abs)
+		if err != nil {
+			log.Printf("notes for %s: %v", abs, err)
+		}
+		if ns != nil {
+			doc.Notes = ns
+		}
+		doc.NotesEnabled = s.canWrite(r)
+	}
+	return doc, nil
 }
 
-func (s *httpServer) renderPage(w http.ResponseWriter, it state.Item, rel string) {
-	d, err := s.renderDoc(it, rel)
+func (s *httpServer) renderPage(w http.ResponseWriter, r *http.Request, it state.Item, rel string) {
+	d, err := s.renderDoc(r, it, rel)
 	if err != nil {
 		s.notFound(w)
 		return
@@ -326,11 +351,12 @@ func (s *httpServer) renderPage(w http.ResponseWriter, it state.Item, rel string
 		file = path.Base(rel)
 	}
 	s.page(w, http.StatusOK, "page.html", map[string]any{
-		"Title":   d.Title,
-		"Crumb":   crumb,
-		"Body":    d.HTML,
-		"URL":     urlPath,
-		"DocJSON": docJSON(map[string]any{"key": it.Key(), "kind": "doc", "rel": rel, "file": file, "title": d.Title, "markdown": d.Markdown}),
+		"Title": d.Title,
+		"Crumb": crumb,
+		"Body":  d.HTML,
+		"URL":   urlPath,
+		"DocJSON": docJSON(map[string]any{"key": it.Key(), "kind": "doc", "rel": rel, "file": file, "title": d.Title, "markdown": d.Markdown,
+			"notes": d.Notes, "notesEnabled": d.NotesEnabled}),
 	})
 }
 
