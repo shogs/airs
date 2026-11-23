@@ -74,6 +74,7 @@ body:not(:has(.airs-bar)) .airs-live{top:max(.75rem,env(safe-area-inset-top))}
 .airs-note-actions button,#airs-add-note{min-height:44px;min-width:44px;padding:0 1rem;font:inherit;font-size:.95rem;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);cursor:pointer}
 .airs-note-save{background:var(--note-edge)!important;border-color:var(--note-edge)!important;color:#fff!important;font-weight:600}
 .airs-note-save:disabled{opacity:.45;cursor:default}
+.airs-note-delete{margin-right:auto;color:var(--error)!important}.airs-note-delete:disabled{opacity:.45;cursor:default}
 .airs-note-status{color:var(--muted);font-size:.9em}
 .airs-note-error{color:var(--error);font-size:.9em}
 #airs-add-note{position:fixed;z-index:4;box-shadow:0 2px 10px rgba(0,0,0,.18);font-weight:600}

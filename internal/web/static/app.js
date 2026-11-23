@@ -304,6 +304,12 @@
       b.err.hidden = true;
       b.el.appendChild(b.err);
       var actions = el("div", "airs-note-actions");
+      if (mode === "edit") {
+        b.del = el("button", "airs-note-delete", "Delete");
+        b.del.type = "button";
+        b.del.addEventListener("click", remove);
+        actions.appendChild(b.del);
+      }
       var cancel = el("button", "airs-note-cancel", "Cancel");
       cancel.type = "button";
       b.save = el("button", "airs-note-save", "Save");
@@ -438,6 +444,52 @@
       });
     }
 
+    // Delete the note being edited, after asking: there is no undo.
+    function remove() {
+      if (!box || box.mode !== "edit" || box.saving || !canWrite()) return update();
+      if (!window.confirm("Delete this note? This can't be undone.")) return;
+      var b = box;
+      b.saving = true;
+      b.ta.readOnly = true;
+      showErr("");
+      update();
+      fetch(notesURL, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: b.id, was: b.was }),
+        cache: "no-store",
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (d) { return { r: r, d: d }; });
+      }).then(function (res) {
+        b.saving = false;
+        b.ta.readOnly = false;
+        var r = res.r, d = res.d;
+        if (r.ok || r.status === 404) { // 404: already gone on the Mac
+          list = list.filter(function (n) { return n.id !== b.id; });
+          if (box === b) closeBox();
+          render();
+          placeBox();
+        } else if (r.status === 409 && d.note) {
+          b.was = d.note.text;
+          b.showCard = true;
+          upsert(d.note);
+          render();
+          placeBox();
+          showErr("Changed on the Mac — showing the new version; delete again if you still want to");
+        } else if (r.status === 410) {
+          stop();
+        } else {
+          showErr("Couldn't delete — " + String(d.error || "error " + r.status).replace(/^couldn't save note: /, ""));
+        }
+        update();
+      }).catch(function () {
+        b.saving = false;
+        b.ta.readOnly = false;
+        showErr("Couldn't delete — not connected");
+        update();
+      });
+    }
+
     // Reflect whether notes can be written right now.
     function update() {
       var ok = canWrite();
@@ -445,6 +497,7 @@
       if (!ok) addBtn.hidden = true;
       if (!box) return;
       box.save.disabled = !ok || box.saving;
+      if (box.del) box.del.disabled = !ok || box.saving;
       var msg = "";
       if (stopped) msg = "No longer shared — this note can't be saved; copy it if you want to keep it";
       else if (!isLive) msg = "Offline — your note is kept here; save it once the page is Live again";

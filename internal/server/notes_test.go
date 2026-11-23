@@ -249,3 +249,34 @@ func TestNotesOfSymlinkedDocInFolder(t *testing.T) {
 		t.Fatalf("link to a notes file offers notes: %v", m)
 	}
 }
+
+func TestDeleteNote(t *testing.T) {
+	f := newFixture(t)
+	u := notesURL(t, f, "notes.md", "")
+	_, m := f.send(t, "POST", u, remote, goodNote, nil)
+	id := m["id"].(string)
+	del := func(was, id string, from string) (int, map[string]any) {
+		b, _ := json.Marshal(map[string]string{"id": id, "was": was})
+		return f.send(t, "DELETE", u, from, string(b), nil)
+	}
+	if code, m := del("stale", id, remote); code != 409 || m["note"].(map[string]any)["text"] != "hello" {
+		t.Fatalf("stale: %d %v", code, m)
+	}
+	if code, _ := del("hello", "nope", remote); code != 404 {
+		t.Fatal("unknown id", code)
+	}
+	if code, _ := f.send(t, "DELETE", u, remote, `{"id":"`+id+`","was":"hello"}`, map[string]string{"Origin": "http://evil.example"}); code != 403 {
+		t.Fatal("foreign origin", code)
+	}
+	f.ns.Set(netinfo.Info{LocalIP: "192.168.1.20"}, false)
+	if code, _ := del("hello", id, remote); code != 403 {
+		t.Fatal("untrusted", code)
+	}
+	f.ns.Set(netinfo.Info{LocalIP: "192.168.1.20"}, true)
+	if code, m := del("hello", id, remote); code != 200 || m["deleted"] != id {
+		t.Fatalf("%d %v", code, m)
+	}
+	if strings.Contains(fileText(t, filepath.Join(f.dir, "notes.notes.md")), "hello") {
+		t.Fatal("note still in file")
+	}
+}

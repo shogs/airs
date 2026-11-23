@@ -325,51 +325,11 @@ func (w *Writer) Edit(doc, id, was, text string, now time.Time) (Note, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	p := Path(doc)
-	if err := checkRegular(p); err != nil {
-		return Note{}, err
-	}
-	src, err := os.ReadFile(p)
-	if errors.Is(err, os.ErrNotExist) {
-		return Note{}, ErrNotFound
-	}
+	src, loc, err := locate(p, id, was)
 	if err != nil {
 		return Note{}, err
 	}
-
-	// Find the marker line and the end of the note's region, in raw bytes.
-	var mStart, mEnd, end = -1, -1, len(src)
-	var m marker
-	for off := 0; off < len(src); {
-		nl := bytes.IndexByte(src[off:], '\n')
-		lineEnd := len(src)
-		if nl >= 0 {
-			lineEnd = off + nl + 1
-		}
-		line := strings.TrimRight(string(src[off:lineEnd]), "\n")
-		if mStart >= 0 && isMarker(line) {
-			end = off
-			break
-		}
-		if mk, ok := parseMarker(line); ok && mk.ID == id && mStart < 0 {
-			mStart, mEnd, m = off, lineEnd, mk
-		}
-		off = lineEnd
-	}
-	if mStart < 0 {
-		return Note{}, ErrNotFound
-	}
-	region := string(src[mEnd:end])
-	lines := strings.SplitAfter(region, "\n")
-	trimmed := make([]string, len(lines))
-	for i, l := range lines {
-		trimmed[i] = strings.TrimRight(l, "\n")
-	}
-	quote, cur, header := parseBody(trimmed)
-	quote, cur = normalize(quote), normalize(cur)
-	current := Note{ID: m.ID, Block: m.Block, Index: m.Index, Section: m.Section, Quote: quote, Text: cur, Time: m.Time, Edited: m.Edited}
-	if cur != strings.TrimSpace(normalize(was)) {
-		return Note{}, &ConflictError{Current: current}
-	}
+	mStart, mEnd, end, m, lines, header, current := loc.mStart, loc.mEnd, loc.end, loc.m, loc.lines, loc.header, loc.current
 
 	eol := string(src[mStart:mEnd])[len(strings.TrimRight(string(src[mStart:mEnd]), "\r\n")):]
 	if eol == "" {
@@ -399,6 +359,80 @@ func (w *Writer) Edit(doc, id, was, text string, now time.Time) (Note, error) {
 	}
 	current.Text, current.Edited = text, m.Edited
 	return current, nil
+}
+
+// located is one note's position in a notes file, in raw bytes.
+type located struct {
+	mStart, mEnd, end int      // marker line start/end, end of the note's region
+	m                 marker   // the parsed marker
+	lines             []string // the region after the marker, split after "\n"
+	header            int      // lines before the note's text
+	current           Note
+}
+
+// locate reads p and finds note id. was is the text the caller last saw; if
+// the file now holds something else, it returns *ConflictError.
+func locate(p, id, was string) ([]byte, located, error) {
+	var l located
+	if err := checkRegular(p); err != nil {
+		return nil, l, err
+	}
+	src, err := os.ReadFile(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, l, ErrNotFound
+	}
+	if err != nil {
+		return nil, l, err
+	}
+	l.mStart, l.mEnd, l.end = -1, -1, len(src)
+	for off := 0; off < len(src); {
+		nl := bytes.IndexByte(src[off:], '\n')
+		lineEnd := len(src)
+		if nl >= 0 {
+			lineEnd = off + nl + 1
+		}
+		line := strings.TrimRight(string(src[off:lineEnd]), "\n")
+		if l.mStart >= 0 && isMarker(line) {
+			l.end = off
+			break
+		}
+		if mk, ok := parseMarker(line); ok && mk.ID == id && l.mStart < 0 {
+			l.mStart, l.mEnd, l.m = off, lineEnd, mk
+		}
+		off = lineEnd
+	}
+	if l.mStart < 0 {
+		return nil, l, ErrNotFound
+	}
+	l.lines = strings.SplitAfter(string(src[l.mEnd:l.end]), "\n")
+	trimmed := make([]string, len(l.lines))
+	for i, s := range l.lines {
+		trimmed[i] = strings.TrimRight(s, "\n")
+	}
+	quote, cur, header := parseBody(trimmed)
+	quote, cur = normalize(quote), normalize(cur)
+	l.header = header
+	m := l.m
+	l.current = Note{ID: m.ID, Block: m.Block, Index: m.Index, Section: m.Section, Quote: quote, Text: cur, Time: m.Time, Edited: m.Edited}
+	if cur != strings.TrimSpace(normalize(was)) {
+		return nil, l, &ConflictError{Current: l.current}
+	}
+	return src, l, nil
+}
+
+// Delete removes note id from doc's notes file. was is the text the reader
+// saw; if the note changed since, Delete returns *ConflictError. Every other
+// byte of the file is kept.
+func (w *Writer) Delete(doc, id, was string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	p := Path(doc)
+	src, loc, err := locate(p, id, was)
+	if err != nil {
+		return err
+	}
+	out := append(append([]byte{}, src[:loc.mStart]...), src[loc.end:]...)
+	return writeAtomic(p, out)
 }
 
 func writeAtomic(p string, data []byte) error {

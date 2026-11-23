@@ -56,7 +56,7 @@ shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
 
 Tap a paragraph on the iPad (finger or Apple Pencil) to add a note under it, or select some text
 and tap **Add note** to quote it. Type, or write with the Pencil: iPadOS Scribble turns
-handwriting into text. Tap a note to edit it.
+handwriting into text. Tap a note to edit or delete it (delete asks first; there's no undo).
 
 - **Saved next to the document.** `README.md` gets `README.notes.md` in the same folder. It's
   plain markdown with one section per note, so you can read it in any editor. Editing or deleting
@@ -64,7 +64,8 @@ handwriting into text. Tap a note to edit it.
 - **Stays with its paragraph.** If the document changes, each note stays under the paragraph it
   was written on. If that paragraph is gone, it moves to a **Notes** list at the end.
 - **Edits don't clash.** If a note was changed on the Mac while you edited it on the iPad, airs
-  shows the Mac's version and keeps what you typed, so nothing is overwritten.
+  shows the Mac's version and keeps what you typed, so nothing is overwritten. Deleting works the
+  same way: a note changed on the Mac isn't deleted until you've seen the new version.
 - **Live / Offline.** The pill in the top-right corner shows whether the page is connected.
   Offline, notes are read-only: an open note keeps your text, and you can save it once the page
   is Live again.

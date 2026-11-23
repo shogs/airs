@@ -21,6 +21,7 @@ const maxNoteBody = 16 << 10
 func (s *httpServer) routesNotes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /_airs/notes/{key}/{rel...}", s.postNote)
 	mux.HandleFunc("PUT /_airs/notes/{key}/{rel...}", s.putNote)
+	mux.HandleFunc("DELETE /_airs/notes/{key}/{rel...}", s.deleteNote)
 }
 
 func noteError(w http.ResponseWriter, status int, msg string) {
@@ -138,4 +139,17 @@ func (s *httpServer) putNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *httpServer) deleteNote(w http.ResponseWriter, r *http.Request) {
+	var e noteEdit
+	doc, ok := s.noteDoc(w, r, &e)
+	if !ok {
+		return
+	}
+	if err := s.notes.Delete(doc, e.ID, e.Was); err != nil {
+		saveError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"deleted": e.ID})
 }

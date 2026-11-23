@@ -383,3 +383,72 @@ func TestTextStartingWithQuoteMark(t *testing.T) {
 		t.Fatalf("after edit: %+v", ns[0])
 	}
 }
+
+func TestDeleteKeepsRestByteIdentical(t *testing.T) {
+	for i, txt := range []string{"one", "two", "three"} {
+		t.Run(txt, func(t *testing.T) {
+			d, ns := threeNotes(t)
+			before := []byte(read(t, Path(d)))
+			start := bytes.LastIndex(before[:bytes.Index(before, []byte(`"id":"`+ns[i].ID))], []byte("<!-- airs:note"))
+			end := len(before)
+			if i < 2 {
+				end = bytes.LastIndex(before[:bytes.Index(before, []byte(`"id":"`+ns[i+1].ID))], []byte("<!-- airs:note"))
+			}
+			var w Writer
+			if err := w.Delete(d, ns[i].ID, txt); err != nil {
+				t.Fatal(err)
+			}
+			after := []byte(read(t, Path(d)))
+			want := append(append([]byte{}, before[:start]...), before[end:]...)
+			if !bytes.Equal(after, want) {
+				t.Fatalf("got:\n%s\nwant:\n%s", after, want)
+			}
+			got, _ := Read(d)
+			if len(got) != 2 {
+				t.Fatalf("%+v", got)
+			}
+			for _, n := range got {
+				if n.ID == ns[i].ID {
+					t.Fatal("still there")
+				}
+			}
+		})
+	}
+}
+
+func TestDeleteErrors(t *testing.T) {
+	d, ns := threeNotes(t)
+	before := read(t, Path(d))
+	var w Writer
+	if err := w.Delete(d, "nope", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	var ce *ConflictError
+	if err := w.Delete(d, ns[0].ID, "stale"); !errors.As(err, &ce) || ce.Current.Text != "one" {
+		t.Fatal(err)
+	}
+	if read(t, Path(d)) != before {
+		t.Fatal("file changed")
+	}
+}
+
+func TestDeleteCRLFAndSymlink(t *testing.T) {
+	d := doc(t)
+	src := "<!-- airs:note {\"id\":\"a\",\"block\":\"\",\"index\":0,\"section\":\"\",\"time\":\"2026-11-23T14:02:00Z\"} -->\r\n### S\r\n\r\nfirst\r\n\r\n" +
+		"<!-- airs:note {\"id\":\"c\",\"block\":\"\",\"index\":0,\"section\":\"\",\"time\":\"2026-11-23T14:03:00Z\"} -->\r\n### T\r\n\r\nlast\r\n"
+	os.WriteFile(Path(d), []byte(src), 0o644)
+	var w Writer
+	if err := w.Delete(d, "a", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(t, Path(d)); !strings.HasPrefix(got, "<!-- airs:note {\"id\":\"c\"") {
+		t.Fatalf("%q", got)
+	}
+	d2 := doc(t)
+	target := filepath.Join(t.TempDir(), "x")
+	os.WriteFile(target, []byte(src), 0o644)
+	os.Symlink(target, Path(d2))
+	if err := w.Delete(d2, "a", "first"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Fatalf("delete through symlink: %v", err)
+	}
+}
