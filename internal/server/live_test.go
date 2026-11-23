@@ -20,7 +20,7 @@ func liveFixture(t *testing.T) (*fixture, *httptest.Server, state.Item) {
 	t.Helper()
 	f := newFixture(t)
 	for _, it := range f.store.Items() {
-		if err := f.hub.Watch(it.ID, it.Path, it.IsDir); err != nil {
+		if err := f.hub.Watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -171,5 +171,14 @@ func TestEventsForbiddenUntrusted(t *testing.T) {
 		if code, _, _ := f.get(t, p, remote); code != 403 {
 			t.Errorf("%s: %d", p, code)
 		}
+	}
+}
+
+func TestEventsChangeOnNotesWrite(t *testing.T) {
+	f, srv, it := liveFixture(t)
+	_, r := openEvents(t, srv, it.Key())
+	os.WriteFile(filepath.Join(f.dir, "notes.notes.md"), []byte("note\n"), 0o644)
+	if ev := readEvent(t, r); ev != "change" {
+		t.Fatalf("got %q", ev)
 	}
 }

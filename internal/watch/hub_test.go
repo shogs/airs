@@ -256,3 +256,35 @@ func TestLargeFolderUsesFewFDs(t *testing.T) {
 		t.Fatalf("watching 5000 files opened %d descriptors", after-before)
 	}
 }
+
+func TestAlsoPathEmitsChange(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "doc.md")
+	side := filepath.Join(dir, "doc.notes.md")
+	write(t, f, "a")
+	h := newHub(t)
+	if err := h.Watch(1, f, false, side); err != nil {
+		t.Fatal(err)
+	}
+	ch, cancel := h.Subscribe(1)
+	defer cancel()
+	write(t, side, "first note")
+	expect(t, ch, Change)
+	time.Sleep(200 * time.Millisecond)
+	write(t, side, "second note")
+	expect(t, ch, Change)
+	drain(ch, 600*time.Millisecond) // FSEvents may send a late duplicate of the last write
+	write(t, filepath.Join(dir, "other.md"), "x")
+	expectNone(t, ch, 300*time.Millisecond)
+}
+
+func drain(ch <-chan Event, d time.Duration) {
+	deadline := time.After(d)
+	for {
+		select {
+		case <-ch:
+		case <-deadline:
+			return
+		}
+	}
+}

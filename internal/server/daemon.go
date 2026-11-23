@@ -166,7 +166,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	for _, it := range d.store.Items() {
-		if err := d.hub.Watch(it.ID, it.Path, it.IsDir); err != nil {
+		if err := d.hub.Watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
 			d.logf("watch %s: %v", it.Path, err)
 		}
 	}

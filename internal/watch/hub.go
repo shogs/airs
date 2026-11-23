@@ -9,6 +9,7 @@ package watch
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,7 +32,8 @@ type Event struct{ Kind Kind }
 const streamLatency = 50 * time.Millisecond
 
 type entry struct {
-	root    string // canonical (symlink-resolved) file or folder path
+	root    string   // canonical (symlink-resolved) file or folder path
+	also    []string // canonical extra files that count as the item (e.g. its notes file)
 	isDir   bool
 	stream  *fsevents.EventStream
 	startID uint64
@@ -72,8 +74,9 @@ func canonical(p string) string {
 	}
 }
 
-// Watch starts watching an item. A missing path is fine: events start when it appears.
-func (h *Hub) Watch(id int, root string, isDir bool) error {
+// Watch starts watching an item. A missing path is fine: events start when it
+// appears. Changes to the also files count as changes to the item.
+func (h *Hub) Watch(id int, root string, isDir bool, also ...string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, ok := h.items[id]; ok || h.closed {
@@ -83,8 +86,11 @@ func (h *Hub) Watch(id int, root string, isDir bool) error {
 	// made just before the stream started (e.g. the file's own creation).
 	start := fsevents.LatestEventID()
 	e := &entry{root: canonical(root), isDir: isDir, done: make(chan struct{}), startID: start, started: time.Now()}
+	for _, a := range also {
+		e.also = append(e.also, canonical(a))
+	}
 	e.stream = &fsevents.EventStream{
-		Paths:   []string{e.root},
+		Paths:   append([]string{e.root}, e.also...),
 		Latency: streamLatency,
 		Flags:   fsevents.FileEvents | fsevents.WatchRoot,
 		Resume:  true,
@@ -142,7 +148,7 @@ func hidden(name string) bool { return strings.HasPrefix(name, ".") }
 
 func (e *entry) matches(p string) bool {
 	p = filepath.Clean(p)
-	if p == e.root {
+	if p == e.root || slices.Contains(e.also, p) {
 		return true
 	}
 	if !e.isDir {

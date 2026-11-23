@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"airs/internal/api"
+	"airs/internal/notes"
 	"airs/internal/render"
 	"airs/internal/state"
 )
@@ -93,7 +94,7 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 		ctlError(w, 500, err.Error())
 		return
 	}
-	if err := d.hub.Watch(it.ID, it.Path, it.IsDir); err != nil {
+	if err := d.hub.Watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
 		d.logf("watch %s: %v", it.Path, err)
 	}
 	d.cancelIdle()
@@ -173,4 +174,13 @@ func (d *Daemon) ctlUntrust(w http.ResponseWriter, r *http.Request) {
 	d.store.Untrust(d.fingerprint())
 	d.pollNet()
 	writeJSON(w, 200, d.status())
+}
+
+// watchPaths are the extra files watched with an item: a file's notes file.
+// A folder's notes files are inside it and already watched.
+func watchPaths(it state.Item) []string {
+	if it.IsDir {
+		return nil
+	}
+	return []string{notes.Path(it.Path)}
 }
