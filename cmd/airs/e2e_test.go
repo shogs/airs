@@ -3,11 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -77,6 +79,7 @@ func TestEndToEnd(t *testing.T) {
 	if c := get("/notes.md"); c != 200 {
 		t.Fatalf("GET /notes.md %d", c)
 	}
+	e2eNote(t, port, home)
 	if out, code := airs("docs"); code != 0 || !strings.Contains(out, "docs/") {
 		t.Fatalf("add folder: %d %s", code, out)
 	}
@@ -88,6 +91,7 @@ func TestEndToEnd(t *testing.T) {
 	}
 	airs("remove", "notes.md")
 	airs("remove", "2")
+
 	sock := filepath.Join(stateDir, "airs.sock")
 	waitGone := func() {
 		t.Helper()
@@ -106,7 +110,7 @@ func TestEndToEnd(t *testing.T) {
 
 	// Kill -9 leaves a stale socket; the next command must recover.
 	if out, code := airs("notes.md"); code != 0 {
-		t.Fatalf("re-add: %s", out)
+		t.Fatalf("re-add: %s\nlog: %s", out, logTail())
 	}
 	pid := daemonPID(t, bin, env, home)
 	syscall.Kill(pid, syscall.SIGKILL)
@@ -202,4 +206,49 @@ func envValue(env []string, k string) string {
 		}
 	}
 	return ""
+}
+
+// e2eNote adds a note to notes.md through the LAN server, as a page would,
+// and checks it lands in notes.notes.md and comes back in the render JSON.
+func e2eNote(t *testing.T, port int, home string) {
+	t.Helper()
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
+	resp, err := http.Get(base + "/notes.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	m := regexp.MustCompile(`<script type="application/json" id="airs-doc">(.*?)</script>`).FindSubmatch(page)
+	if m == nil {
+		t.Fatal("no airs-doc JSON on the page")
+	}
+	var doc struct {
+		Key          string `json:"key"`
+		NotesEnabled bool   `json:"notesEnabled"`
+	}
+	if err := json.Unmarshal(m[1], &doc); err != nil || !doc.NotesEnabled {
+		t.Fatalf("doc JSON %s: %v", m[1], err)
+	}
+	body := `{"block":"Notes","index":0,"section":"notes","heading":"Notes","quote":"","text":"e2e note"}`
+	resp, err = http.Post(base+"/_airs/notes/"+doc.Key+"/", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 201 {
+		t.Fatalf("POST note: %d", resp.StatusCode)
+	}
+	if b, _ := os.ReadFile(filepath.Join(home, "notes.notes.md")); !strings.Contains(string(b), "e2e note") {
+		t.Fatalf("notes file: %q", b)
+	}
+	resp, err = http.Get(base + "/_airs/render/" + doc.Key + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `"text":"e2e note"`) {
+		t.Fatalf("render JSON: %s", b)
+	}
 }

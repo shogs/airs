@@ -38,7 +38,10 @@ func (e *NotFoundError) Error() string { return e.Msg }
 // Start launches the daemon for dirs. Tests replace it.
 var Start = startDaemon
 
-const startTimeout = 2 * time.Second
+const (
+	startTimeout    = 2 * time.Second
+	restartInterval = 250 * time.Millisecond
+)
 
 // Client is a connection to the daemon.
 type Client struct{ hc *http.Client }
@@ -79,10 +82,17 @@ func Connect(dirs paths.Dirs, spawn bool) (*Client, error) {
 	if err := Start(dirs); err != nil {
 		return nil, fmt.Errorf("starting airs: %w", err)
 	}
+	// A daemon that is still exiting counts as running, so Start leaves it
+	// alone; once it has gone, asking again starts a new one.
 	deadline := time.Now().Add(startTimeout)
+	nextStart := time.Now().Add(restartInterval)
 	for time.Now().Before(deadline) {
 		if alive(sock) {
 			return newClient(sock), nil
+		}
+		if time.Now().After(nextStart) {
+			Start(dirs)
+			nextStart = time.Now().Add(restartInterval)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
