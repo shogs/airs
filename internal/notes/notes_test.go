@@ -48,7 +48,7 @@ var sample = Input{Block: "Needs Go 1.27+ and macOS.", Index: 4, Section: "insta
 func TestAppendCreatesFile(t *testing.T) {
 	d := doc(t)
 	var w Writer
-	n, err := w.Append(d, sample, t0)
+	n, err := w.Append(Path(d), filepath.Base(d), sample, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,10 +68,10 @@ func TestRoundTrip(t *testing.T) {
 	d := doc(t)
 	var w Writer
 	in2 := Input{Block: "見て 🎉 block", Index: 0, Section: "", Heading: "Doc", Quote: "a\nb", Text: "見て 🎉\n\nsecond para"}
-	if _, err := w.Append(d, sample, t0); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), sample, t0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Append(d, in2, t0.Add(time.Minute)); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), in2, t0.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	ns, err := Read(d)
@@ -102,7 +102,7 @@ func TestEscapesMarkers(t *testing.T) {
 	in := sample
 	in.Text = "x <!-- airs:note {} --> y"
 	in.Quote = "<!-- q"
-	if _, err := w.Append(d, in, t0); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), in, t0); err != nil {
 		t.Fatal(err)
 	}
 	if c := strings.Count(read(t, Path(d)), "<!-- airs:note"); c != 1 {
@@ -144,14 +144,14 @@ func TestLimits(t *testing.T) {
 	}
 	for i, in := range bad {
 		var ie *InputError
-		if _, err := w.Append(d, in, t0); !errors.As(err, &ie) {
+		if _, err := w.Append(Path(d), filepath.Base(d), in, t0); !errors.As(err, &ie) {
 			t.Errorf("%d: want InputError, got %v", i, err)
 		}
 	}
-	if _, err := w.Append(d, Input{Text: strings.Repeat("x", 10000)}, t0); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), Input{Text: strings.Repeat("x", 10000)}, t0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.Append(d, Input{Quote: "only a quote"}, t0); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), Input{Quote: "only a quote"}, t0); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -165,7 +165,7 @@ func threeNotes(t *testing.T) (string, []Note) {
 	for i, txt := range []string{"one", "two", "three"} {
 		in := sample
 		in.Text = txt
-		if _, err := w.Append(d, in, t0.Add(time.Duration(i)*time.Minute)); err != nil {
+		if _, err := w.Append(Path(d), filepath.Base(d), in, t0.Add(time.Duration(i)*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -184,7 +184,7 @@ func TestEditKeepsRestByteIdentical(t *testing.T) {
 	next := bytes.Index(before, []byte(`"id":"`+ns[2].ID))
 	next = bytes.LastIndex(before[:next], []byte("<!-- airs:note"))
 	var w Writer
-	n, err := w.Edit(d, ns[1].ID, "two", "TWO edited", t0.Add(time.Hour))
+	n, err := w.Edit(Path(d), ns[1].ID, "two", "TWO edited", t0.Add(time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestEditKeepsRestByteIdentical(t *testing.T) {
 func TestEditLastNote(t *testing.T) {
 	d, ns := threeNotes(t)
 	var w Writer
-	if _, err := w.Edit(d, ns[2].ID, "three", "3", t0); err != nil {
+	if _, err := w.Edit(Path(d), ns[2].ID, "three", "3", t0); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := Read(d)
@@ -219,7 +219,7 @@ func TestEditLastNote(t *testing.T) {
 func TestEditEmptyText(t *testing.T) {
 	d, ns := threeNotes(t)
 	var w Writer
-	if _, err := w.Edit(d, ns[0].ID, "one", "", t0); err != nil {
+	if _, err := w.Edit(Path(d), ns[0].ID, "one", "", t0); err != nil {
 		t.Fatal(err)
 	}
 	got, _ := Read(d)
@@ -232,20 +232,20 @@ func TestEditErrors(t *testing.T) {
 	d, ns := threeNotes(t)
 	before := read(t, Path(d))
 	var w Writer
-	if _, err := w.Edit(d, "nope", "", "x", t0); !errors.Is(err, ErrNotFound) {
+	if _, err := w.Edit(Path(d), "nope", "", "x", t0); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	var ce *ConflictError
-	if _, err := w.Edit(d, ns[0].ID, "stale", "x", t0); !errors.As(err, &ce) || ce.Current.Text != "one" {
+	if _, err := w.Edit(Path(d), ns[0].ID, "stale", "x", t0); !errors.As(err, &ce) || ce.Current.Text != "one" {
 		t.Fatal(err)
 	}
-	if _, err := w.Edit(d, ns[0].ID, "one", strings.Repeat("x", 10001), t0); err == nil {
+	if _, err := w.Edit(Path(d), ns[0].ID, "one", strings.Repeat("x", 10001), t0); err == nil {
 		t.Fatal("limit not enforced on edit")
 	}
 	if read(t, Path(d)) != before {
 		t.Fatal("file changed")
 	}
-	if _, err := w.Edit(filepath.Join(t.TempDir(), "none.md"), "x", "", "y", t0); !errors.Is(err, ErrNotFound) {
+	if _, err := w.Edit(Path(filepath.Join(t.TempDir(), "none.md")), "x", "", "y", t0); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 }
@@ -254,7 +254,7 @@ func TestEditKeepsMode(t *testing.T) {
 	d, ns := threeNotes(t)
 	os.Chmod(Path(d), 0o640)
 	var w Writer
-	if _, err := w.Edit(d, ns[0].ID, "one", "x", t0); err != nil {
+	if _, err := w.Edit(Path(d), ns[0].ID, "one", "x", t0); err != nil {
 		t.Fatal(err)
 	}
 	fi, _ := os.Stat(Path(d))
@@ -266,7 +266,7 @@ func TestEditKeepsMode(t *testing.T) {
 func TestConcurrentWrites(t *testing.T) {
 	d := doc(t)
 	var w Writer
-	first, err := w.Append(d, sample, t0)
+	first, err := w.Append(Path(d), filepath.Base(d), sample, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestConcurrentWrites(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := w.Append(d, sample, t0); err != nil {
+			if _, err := w.Append(Path(d), filepath.Base(d), sample, t0); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -289,7 +289,7 @@ func TestConcurrentWrites(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			txt := strings.Repeat("e", i+1)
-			if _, err := w.Edit(d, first.ID, was, txt, t0); err != nil {
+			if _, err := w.Edit(Path(d), first.ID, was, txt, t0); err != nil {
 				t.Error(err)
 			}
 			was = txt
@@ -311,7 +311,7 @@ func TestAppendToForeignFile(t *testing.T) {
 	d := doc(t)
 	os.WriteFile(Path(d), []byte("hello"), 0o644)
 	var w Writer
-	if _, err := w.Append(d, sample, t0); err != nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), sample, t0); err != nil {
 		t.Fatal(err)
 	}
 	got := read(t, Path(d))
@@ -327,7 +327,7 @@ func TestEditCRLFFile(t *testing.T) {
 		"<!-- airs:note {\"id\":\"c\",\"block\":\"\",\"index\":0,\"section\":\"\",\"time\":\"2026-11-23T14:03:00Z\"} -->\r\nlast\r\n"
 	os.WriteFile(Path(d), []byte(src), 0o644)
 	var w Writer
-	n, err := w.Edit(d, "a", "line one\nline two", "new", t0)
+	n, err := w.Edit(Path(d), "a", "line one\nline two", "new", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,10 +352,10 @@ func TestRefusesSymlinkedNotesFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var w Writer
-	if _, err := w.Append(d, sample, t0); err == nil {
+	if _, err := w.Append(Path(d), filepath.Base(d), sample, t0); err == nil {
 		t.Fatal("append through a symlink succeeded")
 	}
-	if _, err := w.Edit(d, "x", "", "y", t0); err == nil || errors.Is(err, ErrNotFound) {
+	if _, err := w.Edit(Path(d), "x", "", "y", t0); err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatalf("edit through a symlink: %v", err)
 	}
 	if got := read(t, target); got != "keep\n" {
@@ -367,7 +367,7 @@ func TestTextStartingWithQuoteMark(t *testing.T) {
 	d := doc(t)
 	var w Writer
 	in := Input{Block: "b", Text: "> I disagree\nsecond line"}
-	n, err := w.Append(d, in, t0)
+	n, err := w.Append(Path(d), filepath.Base(d), in, t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +375,7 @@ func TestTextStartingWithQuoteMark(t *testing.T) {
 	if len(ns) != 1 || ns[0].Quote != "" || ns[0].Text != in.Text {
 		t.Fatalf("%+v", ns)
 	}
-	if _, err := w.Edit(d, n.ID, in.Text, "> still mine", t0); err != nil {
+	if _, err := w.Edit(Path(d), n.ID, in.Text, "> still mine", t0); err != nil {
 		t.Fatal(err)
 	}
 	ns, _ = Read(d)
@@ -395,7 +395,7 @@ func TestDeleteKeepsRestByteIdentical(t *testing.T) {
 				end = bytes.LastIndex(before[:bytes.Index(before, []byte(`"id":"`+ns[i+1].ID))], []byte("<!-- airs:note"))
 			}
 			var w Writer
-			if err := w.Delete(d, ns[i].ID, txt); err != nil {
+			if err := w.Delete(Path(d), ns[i].ID, txt); err != nil {
 				t.Fatal(err)
 			}
 			after := []byte(read(t, Path(d)))
@@ -420,11 +420,11 @@ func TestDeleteErrors(t *testing.T) {
 	d, ns := threeNotes(t)
 	before := read(t, Path(d))
 	var w Writer
-	if err := w.Delete(d, "nope", ""); !errors.Is(err, ErrNotFound) {
+	if err := w.Delete(Path(d), "nope", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatal(err)
 	}
 	var ce *ConflictError
-	if err := w.Delete(d, ns[0].ID, "stale"); !errors.As(err, &ce) || ce.Current.Text != "one" {
+	if err := w.Delete(Path(d), ns[0].ID, "stale"); !errors.As(err, &ce) || ce.Current.Text != "one" {
 		t.Fatal(err)
 	}
 	if read(t, Path(d)) != before {
@@ -438,7 +438,7 @@ func TestDeleteCRLFAndSymlink(t *testing.T) {
 		"<!-- airs:note {\"id\":\"c\",\"block\":\"\",\"index\":0,\"section\":\"\",\"time\":\"2026-11-23T14:03:00Z\"} -->\r\n### T\r\n\r\nlast\r\n"
 	os.WriteFile(Path(d), []byte(src), 0o644)
 	var w Writer
-	if err := w.Delete(d, "a", "first"); err != nil {
+	if err := w.Delete(Path(d), "a", "first"); err != nil {
 		t.Fatal(err)
 	}
 	if got := read(t, Path(d)); !strings.HasPrefix(got, "<!-- airs:note {\"id\":\"c\"") {
@@ -448,7 +448,33 @@ func TestDeleteCRLFAndSymlink(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "x")
 	os.WriteFile(target, []byte(src), 0o644)
 	os.Symlink(target, Path(d2))
-	if err := w.Delete(d2, "a", "first"); err == nil || errors.Is(err, ErrNotFound) {
+	if err := w.Delete(Path(d2), "a", "first"); err == nil || errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete through symlink: %v", err)
+	}
+}
+
+func TestAppendToNotesFileElsewhere(t *testing.T) {
+	dir := t.TempDir()
+	d := doc(t)
+	p := filepath.Join(dir, "plan.notes.md")
+	var w Writer
+	if _, err := w.Append(p, "plan.md", sample, t0); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(read(t, p), "# Notes on plan.md\n") {
+		t.Fatalf("%q", read(t, p))
+	}
+	ns, err := ReadFile(p)
+	if err != nil || len(ns) != 1 || ns[0].Text != sample.Text {
+		t.Fatalf("%+v %v", ns, err)
+	}
+	if _, err := os.Stat(Path(d)); !os.IsNotExist(err) {
+		t.Fatal("wrote beside the doc")
+	}
+}
+
+func TestPathIn(t *testing.T) {
+	if got := PathIn("/p/.claude/notes", "/h/.claude/plans/x.md"); got != "/p/.claude/notes/x.notes.md" {
+		t.Fatal(got)
 	}
 }

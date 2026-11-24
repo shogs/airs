@@ -94,9 +94,17 @@ func IsNotesFile(doc string) bool {
 	return strings.HasSuffix(strings.ToLower(filepath.Base(doc)), ".notes.md")
 }
 
-// Read returns the notes for doc. A missing notes file means no notes.
-func Read(doc string) ([]Note, error) {
-	b, err := os.ReadFile(Path(doc))
+// PathIn is the notes file for document doc when its notes are kept in dir.
+func PathIn(dir, doc string) string {
+	return filepath.Join(dir, filepath.Base(Path(doc)))
+}
+
+// Read returns the notes for doc from beside it. A missing notes file means no notes.
+func Read(doc string) ([]Note, error) { return ReadFile(Path(doc)) }
+
+// ReadFile returns the notes in notes file p. A missing file means no notes.
+func ReadFile(p string) ([]Note, error) {
+	b, err := os.ReadFile(p)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -255,8 +263,9 @@ func markerLine(m marker) string {
 // Writer serialises writes to notes files.
 type Writer struct{ mu sync.Mutex }
 
-// Append adds a note to doc's notes file, creating it if needed.
-func (w *Writer) Append(doc string, in Input, now time.Time) (Note, error) {
+// Append adds a note to notes file p, creating it if needed; docName is the
+// document's file name, used in a new file's heading.
+func (w *Writer) Append(p, docName string, in Input, now time.Time) (Note, error) {
 	in, err := cleanInput(in)
 	if err != nil {
 		return Note{}, err
@@ -280,10 +289,10 @@ func (w *Writer) Append(doc string, in Input, now time.Time) (Note, error) {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if err := checkRegular(Path(doc)); err != nil {
+	if err := checkRegular(p); err != nil {
 		return Note{}, err
 	}
-	f, err := os.OpenFile(Path(doc), os.O_RDWR|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0o644)
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE|os.O_APPEND|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		return Note{}, err
 	}
@@ -294,7 +303,7 @@ func (w *Writer) Append(doc string, in Input, now time.Time) (Note, error) {
 	}
 	prefix := ""
 	if fi.Size() == 0 {
-		prefix = "# Notes on " + filepath.Base(doc) + "\n\n"
+		prefix = "# Notes on " + docName + "\n\n"
 	} else {
 		tail := make([]byte, 2)
 		off := max(fi.Size()-2, 0)
@@ -317,14 +326,13 @@ func (w *Writer) Append(doc string, in Input, now time.Time) (Note, error) {
 // Edit replaces the text of note id. was is the text the editor started from;
 // if the file now holds something else, Edit returns *ConflictError. Only that
 // note's marker and text change; every other byte of the file is kept.
-func (w *Writer) Edit(doc, id, was, text string, now time.Time) (Note, error) {
+func (w *Writer) Edit(p, id, was, text string, now time.Time) (Note, error) {
 	text, err := clean(text, MaxText, "note")
 	if err != nil {
 		return Note{}, err
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	p := Path(doc)
 	src, loc, err := locate(p, id, was)
 	if err != nil {
 		return Note{}, err
@@ -420,13 +428,12 @@ func locate(p, id, was string) ([]byte, located, error) {
 	return src, l, nil
 }
 
-// Delete removes note id from doc's notes file. was is the text the reader
+// Delete removes note id from notes file p. was is the text the reader
 // saw; if the note changed since, Delete returns *ConflictError. Every other
 // byte of the file is kept.
-func (w *Writer) Delete(doc, id, was string) error {
+func (w *Writer) Delete(p, id, was string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	p := Path(doc)
 	src, loc, err := locate(p, id, was)
 	if err != nil {
 		return err
