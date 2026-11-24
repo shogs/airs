@@ -29,49 +29,49 @@ func noteError(w http.ResponseWriter, status int, msg string) {
 }
 
 // noteDoc runs every check a note write must pass, in order, and returns the
-// symlink-resolved document the note belongs to. It writes the error response
-// itself when a check fails.
-func (s *httpServer) noteDoc(w http.ResponseWriter, r *http.Request, dst any) (string, bool) {
+// symlink-resolved document the note belongs to and its notes file. It writes
+// the error response itself when a check fails.
+func (s *httpServer) noteDoc(w http.ResponseWriter, r *http.Request, dst any) (string, string, bool) {
 	it, ok := s.byKey(r.PathValue("key"))
 	if !ok {
 		writeJSON(w, http.StatusGone, map[string]bool{"gone": true})
-		return "", false
+		return "", "", false
 	}
 	if !s.allowed(r, it) {
 		noteError(w, http.StatusForbidden, "not shared on this network")
-		return "", false
+		return "", "", false
 	}
 	if !s.canWrite(r) {
 		noteError(w, http.StatusForbidden, "notes can only be added on a trusted network")
-		return "", false
+		return "", "", false
 	}
 	abs, err := Resolve(it, r.PathValue("rel"))
 	if err != nil {
 		noteError(w, http.StatusNotFound, "no such document")
-		return "", false
+		return "", "", false
 	}
 	fi, err := os.Stat(abs)
 	if _, md := render.ForPath(abs); err != nil || !fi.Mode().IsRegular() || !md {
 		noteError(w, http.StatusNotFound, "no such document")
-		return "", false
+		return "", "", false
 	}
 	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		noteError(w, http.StatusNotFound, "no such document")
-		return "", false
+		return "", "", false
 	}
 	if !s.notesOn(it, abs) || !s.notesOn(it, real) {
 		noteError(w, http.StatusForbidden, "notes are turned off for this document")
-		return "", false
+		return "", "", false
 	}
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
 		noteError(w, http.StatusUnsupportedMediaType, "send the note as application/json")
-		return "", false
+		return "", "", false
 	}
 	// Browsers send Origin on cross-site requests; only pages from this server may write.
 	if o := r.Header.Get("Origin"); o != "" && o != "http://"+r.Host {
 		noteError(w, http.StatusForbidden, "notes can only be added from airs pages")
-		return "", false
+		return "", "", false
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxNoteBody)).Decode(dst); err != nil {
 		var tooBig *http.MaxBytesError
@@ -80,9 +80,9 @@ func (s *httpServer) noteDoc(w http.ResponseWriter, r *http.Request, dst any) (s
 		} else {
 			noteError(w, http.StatusBadRequest, "bad request")
 		}
-		return "", false
+		return "", "", false
 	}
-	return real, true
+	return real, notesFile(it, real), true
 }
 
 // saveError maps a notes.Writer error to a response.
@@ -109,11 +109,11 @@ func saveError(w http.ResponseWriter, err error) {
 
 func (s *httpServer) postNote(w http.ResponseWriter, r *http.Request) {
 	var in notes.Input
-	doc, ok := s.noteDoc(w, r, &in)
+	doc, nf, ok := s.noteDoc(w, r, &in)
 	if !ok {
 		return
 	}
-	n, err := s.notes.Append(doc, in, time.Now())
+	n, err := s.notes.Append(nf, filepath.Base(doc), in, time.Now())
 	if err != nil {
 		saveError(w, err)
 		return
@@ -129,11 +129,11 @@ type noteEdit struct {
 
 func (s *httpServer) putNote(w http.ResponseWriter, r *http.Request) {
 	var e noteEdit
-	doc, ok := s.noteDoc(w, r, &e)
+	_, nf, ok := s.noteDoc(w, r, &e)
 	if !ok {
 		return
 	}
-	n, err := s.notes.Edit(doc, e.ID, e.Was, e.Text, time.Now())
+	n, err := s.notes.Edit(nf, e.ID, e.Was, e.Text, time.Now())
 	if err != nil {
 		saveError(w, err)
 		return
@@ -143,11 +143,11 @@ func (s *httpServer) putNote(w http.ResponseWriter, r *http.Request) {
 
 func (s *httpServer) deleteNote(w http.ResponseWriter, r *http.Request) {
 	var e noteEdit
-	doc, ok := s.noteDoc(w, r, &e)
+	_, nf, ok := s.noteDoc(w, r, &e)
 	if !ok {
 		return
 	}
-	if err := s.notes.Delete(doc, e.ID, e.Was); err != nil {
+	if err := s.notes.Delete(nf, e.ID, e.Was); err != nil {
 		saveError(w, err)
 		return
 	}

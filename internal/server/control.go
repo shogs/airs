@@ -9,6 +9,7 @@ import (
 
 	"airs/internal/api"
 	"airs/internal/notes"
+	"airs/internal/project"
 	"airs/internal/render"
 	"airs/internal/state"
 )
@@ -19,6 +20,7 @@ func (d *Daemon) controlHandler() http.Handler {
 	mux.HandleFunc("POST /items", d.ctlAdd)
 	mux.HandleFunc("GET /items/{query...}", d.ctlFind)
 	mux.HandleFunc("DELETE /items/{query...}", d.ctlRemove)
+	mux.HandleFunc("GET /notes/{query...}", d.ctlNotes)
 	mux.HandleFunc("POST /trust", d.ctlTrust)
 	mux.HandleFunc("DELETE /trust", d.ctlUntrust)
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, d.status()) })
@@ -36,8 +38,11 @@ func ctlError(w http.ResponseWriter, status int, msg string) {
 func (d *Daemon) view(it state.Item) api.ItemView {
 	info, trusted := d.ns.Get()
 	v := api.ItemView{
-		ID: it.ID, Name: it.Name(), Path: it.Path, IsDir: it.IsDir, AnyNetwork: it.AnyNetwork, Notes: d.cfg.Notes && !it.NoNotes,
-		URL: ItemURL(BaseURL(info, d.port), it), Status: api.StatusShared,
+		ID: it.ID, Name: it.Name(), Path: it.Path, IsDir: it.IsDir, Project: it.Project, AnyNetwork: it.AnyNetwork,
+		Notes: d.cfg.Notes && !it.NoNotes, URL: ItemURL(BaseURL(info, d.port), it), Status: api.StatusShared,
+	}
+	if !it.IsDir {
+		v.NotesPath = notesFile(it, it.Path)
 	}
 	if _, err := os.Stat(it.Path); err != nil {
 		v.Status = api.StatusMissing
@@ -85,11 +90,37 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Project != "" {
+		if err := project.Valid(req.Project); err != nil {
+			ctlError(w, 400, err.Error())
+			return
+		}
+	}
+	notesDir := ""
+	if req.NotesDir != "" {
+		if fi.IsDir() {
+			ctlError(w, 400, "--notes-dir is for files; a folder's notes stay beside each file")
+			return
+		}
+		if !filepath.IsAbs(req.NotesDir) {
+			ctlError(w, 400, "notes folder must be absolute")
+			return
+		}
+		if err := os.MkdirAll(req.NotesDir, 0o755); err != nil {
+			ctlError(w, 400, "can't create notes folder: "+err.Error())
+			return
+		}
+		if notesDir, err = filepath.EvalSymlinks(req.NotesDir); err != nil {
+			ctlError(w, 400, "can't use notes folder: "+err.Error())
+			return
+		}
+	}
 	canon, err := filepath.EvalSymlinks(req.Path)
 	if err != nil {
 		canon = filepath.Clean(req.Path)
 	}
-	it, existed, err := d.store.Add(canon, fi.IsDir(), state.Flags{AnyNetwork: req.Any, NoNotes: req.NoNotes})
+	it, existed, err := d.store.Add(canon, fi.IsDir(), state.Flags{AnyNetwork: req.Any, NoNotes: req.NoNotes,
+		Project: req.Project, MoveProject: req.MoveProject, NotesDir: notesDir})
 	if err != nil {
 		ctlError(w, 500, err.Error())
 		return
@@ -140,6 +171,41 @@ func (d *Daemon) ctlFind(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ctlNotes returns the notes of a shared file, or of a file inside a shared folder.
+func (d *Daemon) ctlNotes(w http.ResponseWriter, r *http.Request) {
+	q := r.PathValue("query")
+	cq := canonicalQuery(q)
+	it, err := d.store.Find(cq)
+	doc := it.Path
+	if errors.Is(err, state.ErrNotFound) && filepath.IsAbs(cq) {
+		var ok bool
+		if it, _, ok = d.store.Containing(cq); ok {
+			err, doc = nil, cq
+		}
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		ctlError(w, 404, "not shared: "+q)
+		return
+	}
+	if !d.findError(w, q, err) {
+		return
+	}
+	if it.IsDir && doc == it.Path {
+		ctlError(w, 400, it.Name()+" is a folder; ask for a file inside it")
+		return
+	}
+	p := notesFile(it, doc)
+	ns, err := notes.ReadFile(p)
+	if err != nil {
+		ctlError(w, 500, err.Error())
+		return
+	}
+	if ns == nil {
+		ns = []notes.Note{}
+	}
+	writeJSON(w, 200, api.NotesResponse{Path: p, Doc: doc, Notes: ns})
+}
+
 func (d *Daemon) ctlRemove(w http.ResponseWriter, r *http.Request) {
 	it, err := d.store.Remove(canonicalQuery(r.PathValue("query")))
 	if !d.findError(w, r.PathValue("query"), err) {
@@ -182,5 +248,5 @@ func watchPaths(it state.Item) []string {
 	if it.IsDir {
 		return nil
 	}
-	return []string{notes.Path(it.Path)}
+	return []string{notesFile(it, it.Path)}
 }

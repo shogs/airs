@@ -45,7 +45,7 @@ func (f *fixture) send(t *testing.T, method, path, from, body string, hdr map[st
 
 func notesURL(t *testing.T, f *fixture, slug, rel string) string {
 	t.Helper()
-	it, ok := f.store.BySlug(slug)
+	it, ok := f.store.ByLink("p", slug)
 	if !ok {
 		t.Fatal("no item", slug)
 	}
@@ -165,7 +165,7 @@ func TestPostNoteSymlinkedDoc(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	f.store.Add(link, false, state.Flags{})
+	f.store.Add(link, false, state.Flags{Project: "p"})
 	if code, m := f.send(t, "POST", notesURL(t, f, "link.md", ""), remote, goodNote, nil); code != 201 {
 		t.Fatal(code, m)
 	}
@@ -278,5 +278,23 @@ func TestDeleteNote(t *testing.T) {
 	}
 	if strings.Contains(fileText(t, filepath.Join(f.dir, "notes.notes.md")), "hello") {
 		t.Fatal("note still in file")
+	}
+}
+
+func TestPostNoteToNotesDir(t *testing.T) {
+	f := newFixture(t)
+	nd := t.TempDir()
+	it, _, _ := f.store.Add(filepath.Join(f.dir, "notes.md"), false, state.Flags{NotesDir: nd})
+	if code, m := f.send(t, "POST", notesURL(t, f, "notes.md", ""), remote, goodNote, nil); code != 201 {
+		t.Fatal(code, m)
+	}
+	if !strings.Contains(fileText(t, filepath.Join(nd, "notes.notes.md")), "hello") {
+		t.Fatal("note not in the notes folder")
+	}
+	if _, err := os.Stat(filepath.Join(f.dir, "notes.notes.md")); err == nil {
+		t.Fatal("note written beside the document")
+	}
+	if _, _, body := f.get(t, "/_airs/render/"+it.Key()+"/", remote); !strings.Contains(body, `"text":"hello"`) {
+		t.Fatalf("render JSON: %s", body)
 	}
 }

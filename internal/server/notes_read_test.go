@@ -17,7 +17,7 @@ import (
 // renderVia fetches the live render JSON for slug/rel as `from` would.
 func (f *fixture) renderVia(t *testing.T, slug, rel, from string) (int, map[string]any) {
 	t.Helper()
-	it, ok := f.store.BySlug(slug)
+	it, ok := f.store.ByLink("p", slug)
 	if !ok {
 		t.Fatal("no item", slug)
 	}
@@ -30,7 +30,7 @@ func (f *fixture) renderVia(t *testing.T, slug, rel, from string) (int, map[stri
 func addNote(t *testing.T, doc, text string) {
 	t.Helper()
 	var w notes.Writer
-	if _, err := w.Append(doc, notes.Input{Block: "b", Text: text}, time.Now()); err != nil {
+	if _, err := w.Append(notes.Path(doc), filepath.Base(doc), notes.Input{Block: "b", Text: text}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -72,7 +72,7 @@ func TestRenderJSONIncludesNotes(t *testing.T) {
 	if got := noteTexts(m); len(got) != 1 || got[0] != "hello note" {
 		t.Fatalf("%v", m["notes"])
 	}
-	_, _, page := f.get(t, "/notes.md", remote)
+	_, _, page := f.get(t, "/p/notes.md", remote)
 	if !strings.Contains(page, `"notesEnabled":true`) || !strings.Contains(page, "hello note") {
 		t.Fatal("page doc JSON lacks notes")
 	}
@@ -117,7 +117,7 @@ func TestNotesDisabled(t *testing.T) {
 
 func TestPagesHaveLivePill(t *testing.T) {
 	f := newFixture(t)
-	for _, p := range []string{"/notes.md", "/docs/", "/docs/a.md"} {
+	for _, p := range []string{"/p/notes.md", "/p/docs/", "/p/docs/a.md"} {
 		if _, _, body := f.get(t, p, remote); !strings.Contains(body, `id="airs-live"`) {
 			t.Errorf("%s has no live pill", p)
 		}

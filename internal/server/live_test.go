@@ -26,7 +26,7 @@ func liveFixture(t *testing.T) (*fixture, *httptest.Server, state.Item) {
 	}
 	srv := httptest.NewServer(f.h)
 	t.Cleanup(srv.Close)
-	it, _ := f.store.BySlug("notes.md")
+	it, _ := f.store.ByLink("p", "notes.md")
 	return f, srv, it
 }
 
@@ -123,7 +123,7 @@ func TestRenderJSON(t *testing.T) {
 
 func TestRenderJSONInFolder(t *testing.T) {
 	f, srv, _ := liveFixture(t)
-	d, _ := f.store.BySlug("docs")
+	d, _ := f.store.ByLink("p", "docs")
 	code, m := getJSON(t, srv.URL+"/_airs/render/"+d.Key()+"/sub/b.md")
 	if code != 200 || !strings.Contains(m["html"].(string), "<h1") {
 		t.Fatalf("%d %v", code, m)
@@ -145,10 +145,10 @@ func TestStaleKeyAfterNameReuse(t *testing.T) {
 	b := filepath.Join(f.dir, "b", "README.md")
 	mkfile(t, a)
 	mkfile(t, b)
-	old, _, _ := f.store.Add(a, false, state.Flags{})
+	old, _, _ := f.store.Add(a, false, state.Flags{Project: "p"})
 	f.store.Remove(a)
 	f.hub.Unwatch(old.ID)
-	nu, _, _ := f.store.Add(b, false, state.Flags{})
+	nu, _, _ := f.store.Add(b, false, state.Flags{Project: "p"})
 	if nu.Slug != old.Slug {
 		t.Fatalf("slug not reused: %q vs %q", nu.Slug, old.Slug)
 	}
@@ -178,6 +178,22 @@ func TestEventsChangeOnNotesWrite(t *testing.T) {
 	f, srv, it := liveFixture(t)
 	_, r := openEvents(t, srv, it.Key())
 	os.WriteFile(filepath.Join(f.dir, "notes.notes.md"), []byte("note\n"), 0o644)
+	if ev := readEvent(t, r); ev != "change" {
+		t.Fatalf("got %q", ev)
+	}
+}
+
+func TestEventsChangeOnNotesDirWrite(t *testing.T) {
+	f := newFixture(t)
+	nd := t.TempDir()
+	it, _, _ := f.store.Add(filepath.Join(f.dir, "notes.md"), false, state.Flags{NotesDir: nd})
+	if err := f.hub.Watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(f.h)
+	t.Cleanup(srv.Close)
+	_, r := openEvents(t, srv, it.Key())
+	os.WriteFile(filepath.Join(nd, "notes.notes.md"), []byte("note\n"), 0o644)
 	if ev := readEvent(t, r); ev != "change" {
 		t.Fatalf("got %q", ev)
 	}

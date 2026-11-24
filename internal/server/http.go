@@ -38,11 +38,13 @@ func NewHTTP(store *state.Store, cfg config.Config, ns *NetState, hub *watch.Hub
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.Handle("GET /_airs/static/", http.StripPrefix("/_airs/static/", http.FileServer(web.Static)))
-	mux.HandleFunc("GET /_airs/asset/{slug}/{rel...}", s.asset)
+	mux.HandleFunc("GET /_airs/asset/{key}/{rel...}", s.asset)
 	mux.HandleFunc("GET /_airs/qr", s.qrPNG)
-	mux.HandleFunc("GET /_airs/", func(w http.ResponseWriter, r *http.Request) { s.notFound(w) })
-	mux.HandleFunc("GET /{slug}", s.item)
-	mux.HandleFunc("GET /{slug}/{rel...}", s.itemPath)
+	// Links are /<project>/<name>[/<path>]. A one-segment path (an old link)
+	// and any unknown /_airs/ path are not found; "_airs" is never a project.
+	mux.HandleFunc("GET /{project}", func(w http.ResponseWriter, r *http.Request) { s.notFound(w) })
+	mux.HandleFunc("GET /{project}/{slug}", s.item)
+	mux.HandleFunc("GET /{project}/{slug}/{rel...}", s.itemPath)
 	s.routesLive(mux)
 	s.routesNotes(mux)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +64,15 @@ func (s *httpServer) allowed(r *http.Request, it state.Item) bool {
 func (s *httpServer) canWrite(r *http.Request) bool {
 	info, trusted := s.ns.Get()
 	return CanWrite(s.cfg, trusted && arrivedOn(r, info.LocalIP), isLocal(r))
+}
+
+// notesFile is where the notes of document docReal (resolved) are kept: the
+// item's notes folder for a file item that has one, otherwise beside it.
+func notesFile(it state.Item, docReal string) string {
+	if !it.IsDir && it.NotesDir != "" {
+		return notes.PathIn(it.NotesDir, it.Path)
+	}
+	return notes.Path(docReal)
 }
 
 // notesOn reports whether notes are switched on for the document at docAbs.
@@ -93,8 +104,9 @@ func (s *httpServer) forbidden(w http.ResponseWriter) {
 
 // lookup finds the item for a request and applies the network gate.
 func (s *httpServer) lookup(w http.ResponseWriter, r *http.Request) (state.Item, bool) {
-	it, ok := s.store.BySlug(r.PathValue("slug"))
-	if !ok {
+	proj := r.PathValue("project")
+	it, ok := s.store.ByLink(proj, r.PathValue("slug"))
+	if proj == state.ReservedSlug || !ok {
 		s.notFound(w)
 		return it, false
 	}
@@ -110,14 +122,28 @@ type link struct {
 	IsDir      bool
 }
 
+type projectLinks struct {
+	Name  string
+	Items []link
+}
+
 func (s *httpServer) index(w http.ResponseWriter, r *http.Request) {
-	var items []link
+	byName := map[string]*projectLinks{}
+	var projects []*projectLinks
 	for _, it := range s.store.Items() {
-		if s.allowed(r, it) {
-			items = append(items, link{Name: it.Name(), Href: ItemPath(it), IsDir: it.IsDir})
+		if !s.allowed(r, it) {
+			continue
 		}
+		p := byName[it.Project]
+		if p == nil {
+			p = &projectLinks{Name: it.Project}
+			byName[it.Project] = p
+			projects = append(projects, p)
+		}
+		p.Items = append(p.Items, link{Name: it.Name(), Href: ItemPath(it), IsDir: it.IsDir})
 	}
-	s.page(w, http.StatusOK, "index.html", map[string]any{"Items": items})
+	sort.Slice(projects, func(i, j int) bool { return projects[i].Name < projects[j].Name })
+	s.page(w, http.StatusOK, "index.html", map[string]any{"Projects": projects})
 }
 
 func (s *httpServer) item(w http.ResponseWriter, r *http.Request) {
@@ -171,8 +197,13 @@ func (s *httpServer) itemPath(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *httpServer) asset(w http.ResponseWriter, r *http.Request) {
-	it, ok := s.lookup(w, r)
+	it, ok := s.byKey(r.PathValue("key"))
 	if !ok {
+		s.notFound(w)
+		return
+	}
+	if !s.allowed(r, it) {
+		s.forbidden(w)
 		return
 	}
 	if it.IsDir {
@@ -314,7 +345,7 @@ func (s *httpServer) renderDoc(r *http.Request, it state.Item, rel string) (rend
 	}
 	opt := render.Options{}
 	if !it.IsDir {
-		opt.AssetPrefix = "/_airs/asset/" + url.PathEscape(it.Slug) + "/"
+		opt.AssetPrefix = "/_airs/asset/" + url.PathEscape(it.Key()) + "/"
 	}
 	d, err := rd.Render(src, opt)
 	if err != nil {
@@ -331,7 +362,7 @@ func (s *httpServer) renderDoc(r *http.Request, it state.Item, rel string) (rend
 		real = abs
 	}
 	if s.notesOn(it, abs) && s.notesOn(it, real) {
-		ns, err := notes.Read(real)
+		ns, err := notes.ReadFile(notesFile(it, real))
 		if err != nil {
 			log.Printf("notes for %s: %v", abs, err)
 		}

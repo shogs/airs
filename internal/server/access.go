@@ -56,7 +56,7 @@ func BaseURL(info netinfo.Info, port int) string {
 
 // ItemPath is the URL path of an item.
 func ItemPath(it state.Item) string {
-	p := "/" + url.PathEscape(it.Slug)
+	p := "/" + url.PathEscape(it.Project) + "/" + url.PathEscape(it.Slug)
 	if it.IsDir {
 		p += "/"
 	}

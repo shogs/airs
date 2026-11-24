@@ -16,6 +16,7 @@ import (
 
 	"airs/internal/api"
 	"airs/internal/config"
+	"airs/internal/notes"
 	"airs/internal/netinfo"
 	"airs/internal/paths"
 	"airs/internal/state"
@@ -177,7 +178,7 @@ func TestControlAddListRemove(t *testing.T) {
 		t.Fatalf("%+v", items)
 	}
 	// LAN HTTP is live
-	resp, err := http.Get("http://" + h.d.HTTPAddr() + "/notes.md")
+	resp, err := http.Get("http://" + h.d.HTTPAddr() + "/files/notes.md")
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("http %v %v", err, resp)
 	}
@@ -271,12 +272,12 @@ func TestNetworkChangeReGates(t *testing.T) {
 	h := newHarness(t, trusted)
 	h.start(t, config.Config{Port: 0})
 	h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "notes.md")}, nil)
-	if code := remoteGet(t, h, "/notes.md"); code != 200 {
+	if code := remoteGet(t, h, "/files/notes.md"); code != 200 {
 		t.Fatalf("trusted %d", code)
 	}
 	h.net.set(netB, nil)
 	deadline := time.Now().Add(2 * time.Second)
-	for remoteGet(t, h, "/notes.md") != 403 {
+	for remoteGet(t, h, "/files/notes.md") != 403 {
 		if time.Now().After(deadline) {
 			t.Fatal("still shared after network change")
 		}
@@ -284,7 +285,7 @@ func TestNetworkChangeReGates(t *testing.T) {
 	}
 	h.net.set(netA, nil)
 	deadline = time.Now().Add(2 * time.Second)
-	for remoteGet(t, h, "/notes.md") != 200 {
+	for remoteGet(t, h, "/files/notes.md") != 200 {
 		if time.Now().After(deadline) {
 			t.Fatal("not shared again after returning")
 		}
@@ -302,7 +303,7 @@ func TestOfflineStillServesLocal(t *testing.T) {
 	if !strings.HasPrefix(st.BaseURL, "http://localhost:") || st.NetworkTrusted {
 		t.Fatalf("%+v", st)
 	}
-	resp, err := http.Get("http://" + h.d.HTTPAddr() + "/notes.md")
+	resp, err := http.Get("http://" + h.d.HTTPAddr() + "/files/notes.md")
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("%v %v", err, resp)
 	}
@@ -488,5 +489,84 @@ func TestControlPathsAreSymlinkResolved(t *testing.T) {
 	}
 	if code := h.call(t, "DELETE", "/items/"+url.PathEscape(filepath.Join(link, "notes.md")), nil, nil); code != 200 {
 		t.Fatalf("remove via symlink path %d", code)
+	}
+}
+
+func TestAddProjectInURL(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	var add api.AddResponse
+	h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "notes.md"), Project: "proj"}, &add)
+	if add.Item.Project != "proj" || !strings.HasSuffix(add.Item.URL, "/proj/notes.md") {
+		t.Fatalf("%+v", add.Item)
+	}
+	if code := remoteGet(t, h, "/proj/notes.md"); code != 200 {
+		t.Fatal(code)
+	}
+}
+
+func TestAddCreatesNotesDir(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	nd := filepath.Join(h.tmp, "nd", "sub")
+	var add api.AddResponse
+	if code := h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "plan.md"), NotesDir: nd}, &add); code != 200 {
+		t.Fatal(code)
+	}
+	if fi, err := os.Stat(nd); err != nil || !fi.IsDir() {
+		t.Fatalf("notes dir not created: %v", err)
+	}
+	real, _ := filepath.EvalSymlinks(nd)
+	if add.Item.NotesPath != filepath.Join(real, "plan.notes.md") {
+		t.Fatalf("notes path %q", add.Item.NotesPath)
+	}
+}
+
+func TestAddRejectsNotesDirForFolder(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	dir := filepath.Dir(h.file(t, "d/a.md"))
+	if code := h.call(t, "POST", "/items", api.AddRequest{Path: dir, NotesDir: filepath.Join(h.tmp, "nd")}, nil); code != 400 {
+		t.Fatal(code)
+	}
+}
+
+func TestAddRejectsBadProject(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	if code := h.call(t, "POST", "/items", api.AddRequest{Path: h.file(t, "notes.md"), Project: "_airs"}, nil); code != 400 {
+		t.Fatal(code)
+	}
+}
+
+func TestControlNotes(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	p := h.file(t, "notes.md")
+	h.call(t, "POST", "/items", api.AddRequest{Path: p}, nil)
+	real, _ := filepath.EvalSymlinks(p)
+	var nr api.NotesResponse
+	if code := h.call(t, "GET", "/notes/"+url.PathEscape(p), nil, &nr); code != 200 {
+		t.Fatal(code)
+	}
+	if nr.Path != notes.Path(real) || nr.Doc != real || nr.Notes == nil || len(nr.Notes) != 0 {
+		t.Fatalf("%+v", nr)
+	}
+	var w notes.Writer
+	w.Append(notes.Path(real), "notes.md", notes.Input{Heading: "N", Text: "hi"}, time.Now())
+	h.call(t, "GET", "/notes/"+url.PathEscape(p), nil, &nr)
+	if len(nr.Notes) != 1 || nr.Notes[0].Text != "hi" {
+		t.Fatalf("%+v", nr)
+	}
+	// A file inside a shared folder.
+	inner := h.file(t, "d/sub/a.md")
+	h.call(t, "POST", "/items", api.AddRequest{Path: filepath.Dir(filepath.Dir(inner))}, nil)
+	realInner, _ := filepath.EvalSymlinks(inner)
+	if code := h.call(t, "GET", "/notes/"+url.PathEscape(inner), nil, &nr); code != 200 || nr.Path != notes.Path(realInner) {
+		t.Fatalf("%d %+v", code, nr)
+	}
+	var e api.ErrorResponse
+	if code := h.call(t, "GET", "/notes/"+url.PathEscape(h.file(t, "other.md")), nil, &e); code != 404 || !strings.HasPrefix(e.Error, "not shared") {
+		t.Fatalf("%d %+v", code, e)
 	}
 }
