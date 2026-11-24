@@ -28,7 +28,7 @@ const usage = `airs — read your markdown on other devices
                                share a file or folder (prints link + QR code)
   airs add <file|folder> …     same as above
   airs list                    what's shared
-  airs remove <id|name>        stop sharing
+  airs remove <id|name>        stop sharing (--all: everything; notes files are kept)
   airs notes <file|id|name>    show a document's notes and where they're kept
   airs qr [id|name]            show a QR code (no argument: the index page)
   airs send <id|name>          AirDrop the link
@@ -153,6 +153,12 @@ func (c *cmd) dispatch(args []string) error {
 		}
 		return c.notes(q)
 	case "remove", "rm":
+		if len(rest) > 0 && rest[0] == "--all" {
+			if len(rest) > 1 {
+				return errUsage("usage: airs remove --all")
+			}
+			return c.removeAll()
+		}
 		q, err := oneArg("remove <id|name>", rest)
 		if err != nil {
 			return err
@@ -434,6 +440,48 @@ func (c *cmd) remove(q string) error {
 		return c.printJSON(it)
 	}
 	fmt.Fprintf(c.out, "stopped sharing %s\n", it.Name)
+	return nil
+}
+
+// removeAll stops sharing everything; notes files and trusted networks stay.
+func (c *cmd) removeAll() error {
+	cl, err := c.connectIfShared()
+	if errors.Is(err, errNothingShared) {
+		if c.json {
+			return c.printJSON([]api.ItemView{})
+		}
+		fmt.Fprintln(c.out, "nothing is being shared")
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	items, err := cl.List()
+	if err != nil {
+		return err
+	}
+	removed := []api.ItemView{}
+	for _, it := range items {
+		r, err := cl.Remove(strconv.Itoa(it.ID))
+		if err != nil {
+			return err
+		}
+		removed = append(removed, r)
+		if !c.json {
+			fmt.Fprintf(c.out, "stopped sharing %s\n", r.Name)
+		}
+	}
+	if c.json {
+		return c.printJSON(removed)
+	}
+	switch len(removed) {
+	case 0:
+		fmt.Fprintln(c.out, "nothing is being shared")
+	case 1:
+		fmt.Fprintln(c.out, "stopped sharing 1 item")
+	default:
+		fmt.Fprintf(c.out, "stopped sharing %d items\n", len(removed))
+	}
 	return nil
 }
 

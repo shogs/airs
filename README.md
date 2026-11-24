@@ -28,6 +28,7 @@ go install ./cmd/airs
 | `airs list` | Show what's shared, with ids, links and status. |
 | `airs notes <file\|id\|name>` | Show a document's notes and where they're kept. Works for a file inside a shared folder too. |
 | `airs remove <id\|name>` | Stop sharing. Takes an id, a name (`notes.md`, `docs`), or a path. |
+| `airs remove --all` | Stop sharing everything. Notes files and trusted networks are kept. |
 | `airs qr [id\|name]` | Print a QR code. With no argument it prints the code for the index page. |
 | `airs send <id\|name>` | AirDrop the link. If AirDrop isn't available, the link is copied to the clipboard. |
 | `airs trust [label]` | Trust the network you're on, e.g. `airs trust home`. |

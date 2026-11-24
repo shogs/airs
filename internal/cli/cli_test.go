@@ -497,3 +497,28 @@ func TestAddProjectThroughSymlinkedCwd(t *testing.T) {
 		t.Fatalf("%d %s %s", code, out, errs)
 	}
 }
+
+func TestRemoveAll(t *testing.T) {
+	e := setup(t, true)
+	if out, _, code := e.run(t, "remove", "--all"); code != 0 || !strings.Contains(out, "nothing is being shared") {
+		t.Fatalf("nothing shared: %d %s", code, out)
+	}
+	e.run(t, e.file(t, "a.md"))
+	e.run(t, e.file(t, "b.md"))
+	out, errs, code := e.run(t, "remove", "--all")
+	if code != 0 || !strings.Contains(out, "a.md") || !strings.Contains(out, "b.md") || !strings.Contains(out, "stopped sharing 2 items") {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+	if out, _, _ := e.run(t, "list"); !strings.Contains(out, "nothing is being shared") {
+		t.Fatalf("still shared:\n%s", out)
+	}
+	e.run(t, e.file(t, "c.md"))
+	out, _, _ = e.run(t, "rm", "--all", "--json")
+	var removed []map[string]any
+	if json.Unmarshal([]byte(out), &removed) != nil || len(removed) != 1 || removed[0]["name"] != "c.md" {
+		t.Fatalf("json: %s", out)
+	}
+	if _, errs, code := e.run(t, "remove", "--all", "x.md"); code != 1 || !strings.Contains(errs, "usage") {
+		t.Fatalf("--all with a name: %d %s", code, errs)
+	}
+}
