@@ -14,10 +14,12 @@ How airs works under the hood, why it's built that way, and what to check by han
 | `internal/state` | Shared items and trusted networks, saved to `state.json`. |
 | `internal/watch` | File watching (FSEvents), turned into per-item change events. |
 | `internal/render` | Markdown to HTML (goldmark + chroma). |
+| `internal/project` | Names a project from its git repository (worktree-aware) or folder. |
 | `internal/notes` | The `<doc>.notes.md` file format: read, append, edit. |
 | `internal/netinfo` | Identifies the current network (router IP and hardware address). |
 | `internal/airdrop`, `internal/qr` | AirDrop picker (cgo, `NSSharingService`) and QR codes. |
 | `internal/web` | Embedded templates, CSS and the page script. |
+| `skills/airs` | The Claude Code skill that shares documents for review and reads notes back. |
 
 ## Background server
 
@@ -50,11 +52,28 @@ How airs works under the hood, why it's built that way, and what to check by han
   (for example `/tmp` and `/private/tmp`) matches. This applies on add, remove and lookup.
 - **Lookup order.** An argument is matched as an id first, then a path, then a name. `qr` and
   `send` use the same lookup as `remove`, done by the server.
-- **URL names.** A URL name is the item's basename; on a clash it gets `-2`, `-3`, and so on.
-  `_airs` is reserved for airs' own endpoints.
-- **Internal key.** Each item has a key made from its name and a hash of its path. If a name is
-  reused for a different file, open tabs of the old one are told it's gone rather than showing
-  the new file.
+- **Links.** `/<project>/<name>` for a file, `/<project>/<name>/<path>` inside a folder. Both parts
+  are path-escaped. A one-part path (an old link) and any unknown `/_airs/` path get the not-found
+  page; `_airs` can't be a project.
+- **Projects.** The CLI names the project after the folder it runs in: the git repository
+  containing it, or the folder's own name. The repository is found by walking up to a `.git`.
+  A `.git` *file* pointing into `<repo>/.git/worktrees/…` names the main repository, so a worktree
+  shares the main repo's prefix; any other `.git` file (a submodule) names its own folder. A name
+  that isn't a valid project (empty, `.`, `..`, containing `/`, or `_airs`) becomes `files`.
+  The daemon never sees the CLI's working directory; the CLI sends the project with the add.
+- **Re-adding.** Keeps the item's project unless `--project` is given, which moves it and gives it
+  a new link (the old one stops working). `--notes-dir` given on a re-add replaces the folder;
+  notes already in the old folder stay there.
+- **URL names.** A URL name is the item's basename; on a clash within the same project it gets
+  `-2`, `-3`, and so on. Two repositories with the same name share a project prefix.
+- **Migration.** Items saved before projects existed get one when the state file is loaded: the
+  repository containing the item (walking up from the nearest parent that still exists), else the
+  item's folder name for a file, or its own name for a folder. Names are made unique again within
+  each project, the lowest id keeping its name.
+- **Internal key.** Each item has a key made from its name and a hash of its project and path.
+  If a name is reused for a different file, or an item moves project, open tabs of the old one
+  are told it's gone rather than showing another file. Images in single shared files are served
+  from `/_airs/asset/<key>/…`.
 
 ## What gets served
 
@@ -82,7 +101,9 @@ How airs works under the hood, why it's built that way, and what to check by han
 ## Notes
 
 - **One record.** `<doc>.notes.md` beside the (symlink-resolved) document is the only record of
-  notes. airs reads it back to show notes on the page, so editing the file on the Mac updates open
+  notes. A file shared with `--notes-dir <dir>` keeps them in `<dir>/<doc>.notes.md` instead; airs
+  creates `<dir>` when the item is added and stores it symlink-resolved. Two documents with the
+  same name pointed at one folder share a notes file. airs reads it back to show notes on the page, so editing the file on the Mac updates open
   pages.
 - **Format.** Each note is a hidden marker line followed by readable markdown:
 
@@ -124,8 +145,22 @@ How airs works under the hood, why it's built that way, and what to check by han
   that rules out drive-by writes from other web pages.
 - **Turned off** by `notes = false`, by `--no-notes` on the item, and always for `*.notes.md`
   pages themselves.
-- **Watching.** A shared file's watcher also watches its notes file; a folder's notes files are
-  inside the folder and already watched.
+- **Watching.** A shared file's watcher also watches its notes file (in its notes folder, if it
+  has one); a folder's notes files are inside the folder and already watched.
+
+## Output for scripts and agents
+
+- **`--json`** prints exactly one JSON value on stdout: the item (plus `existed`,
+  `network_trusted`, and `qr` when asked) for add, an array for `list`, `{url, qr}` for `qr`,
+  `{path, doc, notes}` for `notes`, the removed item for `remove`. Errors are printed as
+  `{"error": "…"}` on stdout as well as on stderr, with exit code 1. Other commands refuse
+  `--json` rather than print text.
+- **QR codes.** Printed automatically only when stdout is a terminal (low error correction, the
+  smallest code). `--qr` prints one anyway, and `--json --qr` puts it in a `qr` field, with medium
+  error correction: an agent repeats it in its reply, and up to about 15% of it can be wrong and
+  it still scans.
+- **Untrusted network.** The add's `status` is `"blocked"`; the text warning is only printed
+  without `--json`.
 
 ## File watching
 

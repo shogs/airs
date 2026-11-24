@@ -16,8 +16,8 @@ import (
 
 	"airs/internal/api"
 	"airs/internal/config"
-	"airs/internal/notes"
 	"airs/internal/netinfo"
+	"airs/internal/notes"
 	"airs/internal/paths"
 	"airs/internal/state"
 )

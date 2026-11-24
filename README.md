@@ -5,8 +5,8 @@ over Wi-Fi. Pages refresh when you save, you get a QR code for every link, you c
 any link to your devices, and you can jot notes on a page with your finger or Apple Pencil.
 
 ```
-$ airs notes.md
-serving notes.md → http://192.168.1.20:7777/notes.md
+$ cd ~/Projects/myapp && airs notes.md
+serving notes.md → http://192.168.1.20:7777/myapp/notes.md
 █▀▀▀▀▀█ ▄▀ ▄ █▀▀▀▀▀█
 ...
 ```
@@ -23,9 +23,10 @@ go install ./cmd/airs
 
 | Command | What it does |
 |---|---|
-| `airs <file\|folder> [--any] [--no-notes]` | Share a markdown file or a folder. Prints the link and a QR code. `--no-notes` stops readers adding notes to it. |
-| `airs add <file\|folder> [--any] [--no-notes]` | Same as above, spelled out. Use it, or `./`, for a file whose name matches a command (`airs add list`). |
+| `airs <file\|folder> [flags]` | Share a markdown file or a folder. Prints the link, and a QR code when run in a terminal. Flags below. |
+| `airs add <file\|folder> [flags]` | Same as above, spelled out. Use it, or `./`, for a file whose name matches a command (`airs add list`). |
 | `airs list` | Show what's shared, with ids, links and status. |
+| `airs notes <file\|id\|name>` | Show a document's notes and where they're kept. Works for a file inside a shared folder too. |
 | `airs remove <id\|name>` | Stop sharing. Takes an id, a name (`notes.md`, `docs`), or a path. |
 | `airs qr [id\|name]` | Print a QR code. With no argument it prints the code for the index page. |
 | `airs send <id\|name>` | AirDrop the link. If AirDrop isn't available, the link is copied to the clipboard. |
@@ -33,8 +34,40 @@ go install ./cmd/airs
 | `airs untrust` | Stop trusting the current network. |
 | `airs stop` | Stop the background server. Your list is kept and comes back on the next command. |
 
-Links use names: `/notes.md` for a file, and `/docs/` or `/docs/sub/page.md` for a folder. When two
-shared items have the same name, the second one gets `-2`, as in `/README-2.md`.
+Flags for sharing:
+
+| Flag | What it does |
+|---|---|
+| `--any` | Share on any network, not just trusted ones. |
+| `--no-notes` | Readers can't add notes to it. |
+| `--project <name>` | Put it under this project in its link. Moves an item that's already shared. |
+| `--notes-dir <dir>` | Keep a file's notes in `<dir>` instead of beside it (files only). |
+| `--qr` | Print the QR code even when the output isn't a terminal. |
+| `--json` | Print one JSON object instead of text (also on `list`, `qr`, `notes`, `remove`). Errors come as `{"error": "…"}`. |
+
+Links start with the project: `/myapp/notes.md` for a file, and `/myapp/docs/` or
+`/myapp/docs/sub/page.md` for a folder. The project is the git repository you run `airs` in (the
+main repository, for a worktree), or the folder's name outside one. Re-sharing an item keeps its
+project unless you pass `--project`. When two items in a project have the same name, the second
+one gets `-2`, as in `/myapp/README-2.md`. The index page lists items by project.
+
+Items shared before projects existed get one from their own path the first time a newer airs
+starts: the git repository they're in, or else their folder's name. Their old `/<name>` links
+stop working; open them again from the index page.
+
+## Using airs from Claude Code (or another agent)
+
+`skills/airs/SKILL.md` is a Claude Code skill. With it, Claude shares every plan, spec or design it
+writes for you, gives you the link and QR code, and reads your notes back once you say you're done.
+Install it for all your projects:
+
+```
+mkdir -p ~/.claude/skills/airs && cp skills/airs/SKILL.md ~/.claude/skills/airs/
+```
+
+Any agent can do the same with `airs add <doc> --json --qr` and `airs notes <doc> --json`. Plans
+kept outside the project (Claude Code saves plan-mode plans in `~/.claude/plans/`) keep their notes
+in the project with `--notes-dir <project>/.claude/notes`.
 
 ## How it works
 
@@ -58,7 +91,8 @@ Tap a paragraph on the iPad (finger or Apple Pencil) to add a note under it, or 
 and tap **Add note** to quote it. Type, or write with the Pencil: iPadOS Scribble turns
 handwriting into text. Tap a note to edit it, or tap its bin icon to delete it (it asks first; there's no undo).
 
-- **Saved next to the document.** `README.md` gets `README.notes.md` in the same folder. It's
+- **Saved next to the document.** `README.md` gets `README.notes.md` in the same folder (or in
+  the `--notes-dir` folder, if it was shared with one). It's
   plain markdown with one section per note, so you can read it in any editor. Editing or deleting
   a note there updates open pages live.
 - **Stays with its paragraph.** If the document changes, each note stays under the paragraph it
@@ -92,6 +126,7 @@ notes = true         # false = readers can't add notes anywhere
 | `~/.local/state/airs/airs.log` | Server log |
 | `~/.local/state/airs/airs.sock` | Control socket (JSON over HTTP), also meant for a future menu bar app |
 | `<doc>.notes.md` next to each document | Reader notes for that document |
+| `<dir>/<doc>.notes.md` | Notes of a file shared with `--notes-dir <dir>` |
 
 ## Known issues
 
