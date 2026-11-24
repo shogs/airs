@@ -79,6 +79,22 @@ func canonical(p string) string {
 func (h *Hub) Watch(id int, root string, isDir bool, also ...string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	return h.watchLocked(id, root, isDir, also)
+}
+
+// Rewatch replaces what an item watches (e.g. its notes file moved). Open
+// subscriptions stay connected and aren't told the item is gone.
+func (h *Hub) Rewatch(id int, root string, isDir bool, also ...string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if e, ok := h.items[id]; ok {
+		e.release()
+		delete(h.items, id)
+	}
+	return h.watchLocked(id, root, isDir, also)
+}
+
+func (h *Hub) watchLocked(id int, root string, isDir bool, also []string) error {
 	if _, ok := h.items[id]; ok || h.closed {
 		return nil
 	}

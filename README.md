@@ -53,7 +53,8 @@ one gets `-2`, as in `/myapp/README-2.md`. The index page lists items by project
 
 Items shared before projects existed get one from their own path the first time a newer airs
 starts: the git repository they're in, or else their folder's name. Their old `/<name>` links
-stop working; open them again from the index page.
+stop working; open them again from the index page. An old folder link like `/docs/a.md` can
+match a new link if a project is now called `docs` and has its own `a.md`.
 
 ## Using airs from Claude Code (or another agent)
 

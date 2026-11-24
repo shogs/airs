@@ -316,6 +316,10 @@ func (c *cmd) add(args []string, usageMsg string) error {
 		if err != nil {
 			return err
 		}
+		// Getwd follows $PWD, which may go through a symlink; name the real folder.
+		if real, err := filepath.EvalSymlinks(wd); err == nil {
+			wd = real
+		}
 		req.Project = project.Name(wd)
 	}
 	if o.notesDir != "" {

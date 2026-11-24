@@ -125,7 +125,11 @@ func (d *Daemon) ctlAdd(w http.ResponseWriter, r *http.Request) {
 		ctlError(w, 500, err.Error())
 		return
 	}
-	if err := d.hub.Watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
+	watch := d.hub.Watch
+	if existed && notesDir != "" {
+		watch = d.hub.Rewatch // the notes folder may have changed
+	}
+	if err := watch(it.ID, it.Path, it.IsDir, watchPaths(it)...); err != nil {
 		d.logf("watch %s: %v", it.Path, err)
 	}
 	d.cancelIdle()

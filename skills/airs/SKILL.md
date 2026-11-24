@@ -32,7 +32,9 @@ mentioning it.
      ```sh
      cd <project root> && airs add <doc> --json --qr --notes-dir <project root>/.claude/notes
      ```
-3. The output is one JSON object. Use `url`, `qr` and `status`.
+3. Pass `<doc>` as an absolute path. The output is one JSON object; use `url`, `qr` and
+   `status`. If it's `{"error": "…"}` instead, tell the user what it says and carry on
+   without the share.
 4. Reply with the link first. Then, if your interface shows monospace text (Claude Code
    does), copy the `qr` field into a fenced code block under the link: every character
    exactly as it is, with each `\n` as a line break.
@@ -47,12 +49,13 @@ Edits you make to a shared document reload on the iPad by themselves; don't shar
 
 ## When the user says they're done
 
-1. Read the notes:
+1. Read the notes, with the same absolute path you shared:
    ```sh
-   airs notes <doc> --json
+   airs notes <absolute path of doc> --json
    ```
    You get `{"path", "doc", "notes": [...]}`. Each note has `section` (the heading it's
    under), `quote` (text the user selected, may be empty) and `text` (what they wrote).
+   An `{"error": …}` result means the document isn't shared (any more); say so.
 2. Work through every note: change the document, answer the question, or ask if it's
    unclear. Say which note each change came from.
 3. Leave the share running and the notes file alone. The user may read again, and the

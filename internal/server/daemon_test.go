@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -568,5 +569,33 @@ func TestControlNotes(t *testing.T) {
 	var e api.ErrorResponse
 	if code := h.call(t, "GET", "/notes/"+url.PathEscape(h.file(t, "other.md")), nil, &e); code != 404 || !strings.HasPrefix(e.Error, "not shared") {
 		t.Fatalf("%d %+v", code, e)
+	}
+}
+
+func TestReAddWithNotesDirWatchesIt(t *testing.T) {
+	h := newHarness(t, trusted)
+	h.start(t, config.Config{Port: 0, Notes: true})
+	p := h.file(t, "plan.md")
+	h.call(t, "POST", "/items", api.AddRequest{Path: p}, nil)
+	real, _ := filepath.EvalSymlinks(p)
+	it, err := h.d.store.Find(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get("http://" + h.d.HTTPAddr() + "/_airs/events/" + it.Key())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	r := bufio.NewReader(resp.Body)
+	if ev := readEvent(t, r); ev != "ready" {
+		t.Fatalf("first event %q", ev)
+	}
+	// A page open while the notes folder changes stays connected.
+	nd := filepath.Join(h.tmp, "nd")
+	h.call(t, "POST", "/items", api.AddRequest{Path: p, NotesDir: nd}, nil)
+	os.WriteFile(filepath.Join(nd, "plan.notes.md"), []byte("note\n"), 0o644)
+	if ev := readEvent(t, r); ev != "change" {
+		t.Fatalf("got %q", ev)
 	}
 }

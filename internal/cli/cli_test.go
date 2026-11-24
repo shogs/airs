@@ -485,3 +485,15 @@ func TestHelpMentionsAgentFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestAddProjectThroughSymlinkedCwd(t *testing.T) {
+	e := setup(t, true)
+	link := filepath.Join(e.home, "shortcut")
+	if err := os.Symlink(filepath.Join(e.home, "proj"), link); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(link)
+	if out, errs, code := e.run(t, e.file(t, "notes.md")); code != 0 || !strings.Contains(out, "/proj/notes.md") {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+}
