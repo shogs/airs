@@ -498,27 +498,68 @@ func TestAddProjectThroughSymlinkedCwd(t *testing.T) {
 	}
 }
 
+// answer makes the CLI read reply on stdin for one test.
+func answer(t *testing.T, reply string) {
+	old := stdin
+	stdin = strings.NewReader(reply)
+	t.Cleanup(func() { stdin = old })
+}
+
 func TestRemoveAll(t *testing.T) {
 	e := setup(t, true)
 	if out, _, code := e.run(t, "remove", "--all"); code != 0 || !strings.Contains(out, "nothing is being shared") {
 		t.Fatalf("nothing shared: %d %s", code, out)
 	}
-	e.run(t, e.file(t, "a.md"))
-	e.run(t, e.file(t, "b.md"))
+	a, b := e.file(t, "a.md"), e.file(t, "sub/b.md")
+	e.run(t, a)
+	e.run(t, b)
+	// The question lists names only, and No is the default.
+	for _, reply := range []string{"", "\n", "n\n", "no\n", "x\n"} {
+		answer(t, reply)
+		out, errs, code := e.run(t, "remove", "--all")
+		if code != 1 || !strings.Contains(errs, "a.md") || !strings.Contains(errs, "b.md") || !strings.Contains(errs, "[y/N]") ||
+			strings.Contains(errs, e.home) || !strings.Contains(errs, "nothing was removed") || strings.Contains(out, "stopped") {
+			t.Fatalf("reply %q: %d %q %q", reply, code, out, errs)
+		}
+	}
+	if out, _, _ := e.run(t, "list"); !strings.Contains(out, "a.md") || !strings.Contains(out, "b.md") {
+		t.Fatalf("removed despite no:\n%s", out)
+	}
+	answer(t, "y\n")
 	out, errs, code := e.run(t, "remove", "--all")
-	if code != 0 || !strings.Contains(out, "a.md") || !strings.Contains(out, "b.md") || !strings.Contains(out, "stopped sharing 2 items") {
+	ra, _ := filepath.EvalSymlinks(a)
+	rb, _ := filepath.EvalSymlinks(b)
+	if code != 0 || !strings.Contains(out, "stopped sharing "+ra) || !strings.Contains(out, "stopped sharing "+rb) || !strings.Contains(out, "stopped sharing 2 items") {
 		t.Fatalf("%d %s %s", code, out, errs)
 	}
 	if out, _, _ := e.run(t, "list"); !strings.Contains(out, "nothing is being shared") {
 		t.Fatalf("still shared:\n%s", out)
 	}
-	e.run(t, e.file(t, "c.md"))
-	out, _, _ = e.run(t, "rm", "--all", "--json")
-	var removed []map[string]any
-	if json.Unmarshal([]byte(out), &removed) != nil || len(removed) != 1 || removed[0]["name"] != "c.md" {
-		t.Fatalf("json: %s", out)
-	}
 	if _, errs, code := e.run(t, "remove", "--all", "x.md"); code != 1 || !strings.Contains(errs, "usage") {
 		t.Fatalf("--all with a name: %d %s", code, errs)
+	}
+}
+
+func TestRemoveAllYes(t *testing.T) {
+	e := setup(t, true)
+	e.run(t, e.file(t, "c.md"))
+	answer(t, "") // nothing on stdin: --yes must not ask
+	out, errs, code := e.run(t, "rm", "--all", "--yes", "--json")
+	var removed []map[string]any
+	if code != 0 || strings.Contains(errs, "[y/N]") || json.Unmarshal([]byte(out), &removed) != nil || len(removed) != 1 || removed[0]["name"] != "c.md" {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	e.run(t, e.file(t, "d.md"))
+	answer(t, "")
+	out, _, code = e.run(t, "remove", "--all", "--json")
+	var m map[string]string
+	if code != 1 || json.Unmarshal([]byte(out), &m) != nil || !strings.Contains(m["error"], "--yes") {
+		t.Fatalf("--json without --yes: %d %q", code, out)
+	}
+	if out, errs, code := e.run(t, "remove", "-y", "--all"); code != 0 || !strings.Contains(out, "d.md") {
+		t.Fatalf("-y before --all: %d %s %s", code, out, errs)
+	}
+	if _, errs, code := e.run(t, "remove", "--yes"); code != 1 || !strings.Contains(errs, "usage") {
+		t.Fatalf("--yes without --all: %d %s", code, errs)
 	}
 }

@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,7 +29,8 @@ const usage = `airs — read your markdown on other devices
                                share a file or folder (prints link + QR code)
   airs add <file|folder> …     same as above
   airs list                    what's shared
-  airs remove <id|name>        stop sharing (--all: everything; notes files are kept)
+  airs remove <id|name>        stop sharing
+  airs remove --all [--yes]    stop sharing everything (asks first; notes files are kept)
   airs notes <file|id|name>    show a document's notes and where they're kept
   airs qr [id|name]            show a QR code (no argument: the index page)
   airs send <id|name>          AirDrop the link
@@ -56,6 +58,9 @@ type cmd struct {
 	dirs     paths.Dirs
 	json     bool // --json: print one JSON value on stdout
 }
+
+// stdin is where questions are answered; tests replace it.
+var stdin io.Reader = os.Stdin
 
 // isTerminal reports whether w is a terminal, where the QR code is worth printing.
 var isTerminal = func(w io.Writer) bool {
@@ -153,11 +158,22 @@ func (c *cmd) dispatch(args []string) error {
 		}
 		return c.notes(q)
 	case "remove", "rm":
-		if len(rest) > 0 && rest[0] == "--all" {
-			if len(rest) > 1 {
-				return errUsage("usage: airs remove --all")
+		all, yes, other := false, false, 0
+		for _, a := range rest {
+			switch a {
+			case "--all":
+				all = true
+			case "--yes", "-y":
+				yes = true
+			default:
+				other++
 			}
-			return c.removeAll()
+		}
+		if all || yes {
+			if !all || other > 0 {
+				return errUsage("usage: airs remove --all [--yes]")
+			}
+			return c.removeAll(yes)
 		}
 		q, err := oneArg("remove <id|name>", rest)
 		if err != nil {
@@ -444,7 +460,8 @@ func (c *cmd) remove(q string) error {
 }
 
 // removeAll stops sharing everything; notes files and trusted networks stay.
-func (c *cmd) removeAll() error {
+// Unless yes is set it lists the names and asks first, defaulting to no.
+func (c *cmd) removeAll(yes bool) error {
 	cl, err := c.connectIfShared()
 	if errors.Is(err, errNothingShared) {
 		if c.json {
@@ -460,6 +477,19 @@ func (c *cmd) removeAll() error {
 	if err != nil {
 		return err
 	}
+	if len(items) > 0 && !yes {
+		// The question goes to stderr so stdout stays clean for --json.
+		fmt.Fprintf(c.err, "This stops sharing %d %s:\n", len(items), plural(len(items), "item", "items"))
+		for _, it := range items {
+			fmt.Fprintf(c.err, "  %s\n", it.Name)
+		}
+		fmt.Fprint(c.err, "Remove all? [y/N] ")
+		line, _ := bufio.NewReader(stdin).ReadString('\n')
+		fmt.Fprintln(c.err)
+		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+			return errors.New("cancelled; nothing was removed (--yes skips the question)")
+		}
+	}
 	removed := []api.ItemView{}
 	for _, it := range items {
 		r, err := cl.Remove(strconv.Itoa(it.ID))
@@ -468,21 +498,25 @@ func (c *cmd) removeAll() error {
 		}
 		removed = append(removed, r)
 		if !c.json {
-			fmt.Fprintf(c.out, "stopped sharing %s\n", r.Name)
+			fmt.Fprintf(c.out, "stopped sharing %s\n", r.Path)
 		}
 	}
 	if c.json {
 		return c.printJSON(removed)
 	}
-	switch len(removed) {
-	case 0:
+	if len(removed) == 0 {
 		fmt.Fprintln(c.out, "nothing is being shared")
-	case 1:
-		fmt.Fprintln(c.out, "stopped sharing 1 item")
-	default:
-		fmt.Fprintf(c.out, "stopped sharing %d items\n", len(removed))
+	} else {
+		fmt.Fprintf(c.out, "stopped sharing %d %s\n", len(removed), plural(len(removed), "item", "items"))
 	}
 	return nil
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (c *cmd) qr(q string) error {
