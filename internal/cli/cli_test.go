@@ -563,3 +563,16 @@ func TestRemoveAllYes(t *testing.T) {
 		t.Fatalf("--yes without --all: %d %s", code, errs)
 	}
 }
+
+func TestIsYes(t *testing.T) {
+	for _, s := range []string{"y", "Y", "yes", " YES \n", "y\r\n"} {
+		if !isYes(s) {
+			t.Errorf("%q should be yes", s)
+		}
+	}
+	for _, s := range []string{"", "\n", "\r", "n", "x", "\x03", "\x1b", "yep"} {
+		if isYes(s) {
+			t.Errorf("%q should be no", s)
+		}
+	}
+}

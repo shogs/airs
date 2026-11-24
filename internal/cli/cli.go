@@ -2,7 +2,6 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -484,9 +483,7 @@ func (c *cmd) removeAll(yes bool) error {
 			fmt.Fprintf(c.err, "  %s\n", it.Name)
 		}
 		fmt.Fprint(c.err, "Remove all? [y/N] ")
-		line, _ := bufio.NewReader(stdin).ReadString('\n')
-		fmt.Fprintln(c.err)
-		if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+		if !askYes(stdin, c.err) {
 			return errors.New("cancelled; nothing was removed (--yes skips the question)")
 		}
 	}
