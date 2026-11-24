@@ -57,19 +57,18 @@ starts: the git repository they're in, or else their folder's name. Their old `/
 stop working; open them again from the index page. An old folder link like `/docs/a.md` can
 match a new link if a project is now called `docs` and has its own `a.md`.
 
-## Using airs from Claude Code (or another agent)
+## Using airs from a coding agent
 
-`skills/airs/SKILL.md` is a Claude Code skill. With it, Claude shares every plan, spec or design it
-writes for you, gives you the link and QR code, and reads your notes back once you say you're done.
-Install it for all your projects:
+`skills/airs/SKILL.md` is an agent skill in the standard `SKILL.md` format. With it, the agent
+shares every plan, spec or design it writes for you, gives you the link and QR code, and reads
+your notes back once you say you're done. To install it, ask your agent to read
+[AGENTS.md](AGENTS.md) in this repository, which covers installing airs and the skill for
+Claude Code, Codex, Pi and others, or copy the file into your agent's skills folder yourself
+(for Claude Code, `~/.claude/skills/airs/SKILL.md`). Copy it again after updating airs.
 
-```
-mkdir -p ~/.claude/skills/airs && cp skills/airs/SKILL.md ~/.claude/skills/airs/
-```
-
-Any agent can do the same with `airs add <doc> --json --qr` and `airs notes <doc> --json`. Plans
-kept outside the project (Claude Code saves plan-mode plans in `~/.claude/plans/`) keep their notes
-in the project with `--notes-dir <project>/.claude/notes`.
+Any agent can do the same without the skill, using `airs add <doc> --json --qr` and
+`airs notes <doc> --json`. Plans kept outside the project (Claude Code saves plan-mode plans in
+`~/.claude/plans/`) keep their notes in the project with `--notes-dir <project>/.claude/notes`.
 
 ## How it works
 
@@ -163,4 +162,4 @@ go test -short ./...   # skips the end-to-end test
 ```
 
 See [IMPLEMENTATION.md](IMPLEMENTATION.md) for how airs works inside, security notes, and manual
-checks on real devices.
+checks on real devices. [AGENTS.md](AGENTS.md) is the same ground for coding agents.
