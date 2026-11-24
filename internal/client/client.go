@@ -196,3 +196,9 @@ func (c *Client) Status() (api.StatusResponse, error) {
 }
 
 func (c *Client) Stop() error { return c.do("POST", "/stop", nil, nil) }
+
+// Notes returns the notes of a shared document.
+func (c *Client) Notes(q string) (api.NotesResponse, error) {
+	var v api.NotesResponse
+	return v, c.do("GET", "/notes/"+url.PathEscape(q), nil, &v)
+}

@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"airs/internal/client"
 	"airs/internal/config"
 	"airs/internal/netinfo"
+	"airs/internal/notes"
 	"airs/internal/paths"
 	"airs/internal/server"
 )
@@ -35,7 +38,8 @@ func setup(t *testing.T, trusted bool) *env {
 		t.Fatal(err)
 	}
 	e := &env{tmp: tmp, home: filepath.Join(tmp, "home"), net: netinfo.Fake{Info: homeNet}}
-	os.MkdirAll(e.home, 0o755)
+	os.MkdirAll(filepath.Join(e.home, "proj", ".git"), 0o755)
+	t.Chdir(filepath.Join(e.home, "proj")) // the project is "proj" unless a test moves
 	t.Setenv("HOME", e.home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "c"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(tmp, "s"))
@@ -84,8 +88,16 @@ func (e *env) file(t *testing.T, rel string) string {
 	return p
 }
 
+// onTerminal makes the CLI treat its output as a terminal for one test.
+func onTerminal(t *testing.T) {
+	old := isTerminal
+	isTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { isTerminal = old })
+}
+
 func TestAddPrintsURLAndQR(t *testing.T) {
 	e := setup(t, true)
+	onTerminal(t)
 	out, errs, code := e.run(t, e.file(t, "notes.md"))
 	if code != 0 || !strings.Contains(out, "serving notes.md → http://") || !strings.Contains(out, "/notes.md") || !strings.ContainsAny(out, "█▀▄") {
 		t.Fatalf("%d %q %q", code, out, errs)
@@ -211,6 +223,7 @@ func TestRemoveWhenNothingShared(t *testing.T) {
 
 func TestQR(t *testing.T) {
 	e := setup(t, true)
+	onTerminal(t)
 	e.run(t, e.file(t, "notes.md"))
 	out, _, code := e.run(t, "qr", "notes.md")
 	if code != 0 || !strings.Contains(out, "/notes.md") || !strings.ContainsAny(out, "█▀▄") {
@@ -308,5 +321,167 @@ func TestHelpMentionsNoNotes(t *testing.T) {
 	out, _, _ := e.run(t, "help")
 	if !strings.Contains(out, "--no-notes") || !strings.Contains(out, "notes = false") {
 		t.Fatal(out)
+	}
+}
+
+func TestAddProjectFromCwd(t *testing.T) {
+	e := setup(t, true)
+	out, errs, code := e.run(t, e.file(t, "notes.md"))
+	if code != 0 || !strings.Contains(out, "/proj/notes.md") {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+}
+
+func TestAddProjectFlag(t *testing.T) {
+	e := setup(t, true)
+	if out, _, _ := e.run(t, e.file(t, "a.md"), "--project", "other"); !strings.Contains(out, "/other/a.md") {
+		t.Fatal(out)
+	}
+	if out, _, _ := e.run(t, e.file(t, "b.md"), "--project=other"); !strings.Contains(out, "/other/b.md") {
+		t.Fatal(out)
+	}
+	// Re-adding without --project keeps the project; with it, the share moves.
+	if out, _, _ := e.run(t, e.file(t, "a.md")); !strings.Contains(out, "/other/a.md") {
+		t.Fatal(out)
+	}
+	if out, _, _ := e.run(t, e.file(t, "a.md"), "--project", "third"); !strings.Contains(out, "/third/a.md") {
+		t.Fatal(out)
+	}
+	for _, bad := range [][]string{{"--project", "_airs"}, {"--project"}, {"--project="}} {
+		if _, errs, code := e.run(t, append([]string{e.file(t, "c.md")}, bad...)...); code != 1 || !strings.Contains(errs, "project") {
+			t.Fatalf("%v: %d %s", bad, code, errs)
+		}
+	}
+}
+
+func TestAddNoQRWhenNotTerminal(t *testing.T) {
+	e := setup(t, true)
+	if out, _, _ := e.run(t, e.file(t, "notes.md")); strings.ContainsAny(out, "█▀▄") {
+		t.Fatalf("QR printed to a non-terminal:\n%s", out)
+	}
+}
+
+func TestAddQRFlag(t *testing.T) {
+	e := setup(t, true)
+	if out, _, _ := e.run(t, e.file(t, "notes.md"), "--qr"); !strings.ContainsAny(out, "█▀▄") {
+		t.Fatalf("no QR:\n%s", out)
+	}
+}
+
+func TestAddJSON(t *testing.T) {
+	e := setup(t, false)
+	out, errs, code := e.run(t, e.file(t, "notes.md"), "--json")
+	var m map[string]any
+	if code != 0 || json.Unmarshal([]byte(out), &m) != nil {
+		t.Fatalf("%d %q %q", code, out, errs)
+	}
+	for _, k := range []string{"id", "name", "project", "path", "url", "notes_path", "notes", "existed", "status", "network_trusted"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing %q in %s", k, out)
+		}
+	}
+	if _, ok := m["qr"]; ok || m["status"] != "blocked" || m["project"] != "proj" {
+		t.Fatalf("%s", out)
+	}
+	if strings.Contains(out, "isn't trusted") {
+		t.Fatal("warning text in JSON output")
+	}
+	out, _, _ = e.run(t, e.file(t, "notes.md"), "--json", "--qr")
+	json.Unmarshal([]byte(out), &m)
+	if qr, _ := m["qr"].(string); !strings.ContainsAny(qr, "█▀▄") || m["existed"] != true {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestAddNotesDir(t *testing.T) {
+	e := setup(t, true)
+	out, errs, code := e.run(t, e.file(t, "elsewhere/plan.md"), "--notes-dir", ".claude/notes", "--json")
+	var m map[string]any
+	if code != 0 || json.Unmarshal([]byte(out), &m) != nil {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+	wd, _ := os.Getwd()
+	wd, _ = filepath.EvalSymlinks(wd)
+	if m["notes_path"] != filepath.Join(wd, ".claude", "notes", "plan.notes.md") {
+		t.Fatalf("%s", out)
+	}
+	os.MkdirAll(filepath.Join(e.home, "folder"), 0o755)
+	if _, errs, code := e.run(t, filepath.Join(e.home, "folder"), "--notes-dir=x"); code != 1 || !strings.Contains(errs, "notes-dir") {
+		t.Fatalf("%d %s", code, errs)
+	}
+}
+
+func TestListJSON(t *testing.T) {
+	e := setup(t, true)
+	e.run(t, e.file(t, "notes.md"))
+	out, _, code := e.run(t, "list", "--json")
+	var items []map[string]any
+	if code != 0 || json.Unmarshal([]byte(out), &items) != nil || len(items) != 1 || items[0]["project"] != "proj" {
+		t.Fatalf("%d %s", code, out)
+	}
+	if out, _, _ := e.run(t, "remove", "1", "--json"); !strings.HasPrefix(out, "{") || json.Unmarshal([]byte(out), &map[string]any{}) != nil {
+		t.Fatalf("remove --json: %s", out)
+	}
+	if out, _, _ := e.run(t, "list", "--json"); strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty list: %q", out)
+	}
+}
+
+func TestNotesCommand(t *testing.T) {
+	e := setup(t, true)
+	doc := e.file(t, "notes.md")
+	e.run(t, doc)
+	real, _ := filepath.EvalSymlinks(doc)
+	out, errs, code := e.run(t, "notes", doc)
+	if code != 0 || !strings.Contains(out, "notes: "+notes.Path(real)) || !strings.Contains(out, "no notes yet") {
+		t.Fatalf("%d %s %s", code, out, errs)
+	}
+	var w notes.Writer
+	w.Append(notes.Path(real), "notes.md", notes.Input{Heading: "Hi", Text: "fix the intro"}, time.Now())
+	if out, _, _ := e.run(t, "notes", doc); !strings.Contains(out, "fix the intro") || strings.Contains(out, "no notes yet") {
+		t.Fatal(out)
+	}
+	out, _, _ = e.run(t, "notes", doc, "--json")
+	var nr struct {
+		Path, Doc string
+		Notes     []struct{ Text string }
+	}
+	if json.Unmarshal([]byte(out), &nr) != nil || nr.Path != notes.Path(real) || len(nr.Notes) != 1 || nr.Notes[0].Text != "fix the intro" {
+		t.Fatalf("%s", out)
+	}
+	if _, errs, code := e.run(t, "notes", e.file(t, "other.md")); code != 1 || !strings.Contains(errs, "not shared") {
+		t.Fatalf("%d %s", code, errs)
+	}
+}
+
+func TestJSONErrors(t *testing.T) {
+	e := setup(t, true)
+	out, _, code := e.run(t, filepath.Join(e.home, "missing.md"), "--json")
+	var m map[string]string
+	if code != 1 || json.Unmarshal([]byte(out), &m) != nil || !strings.Contains(m["error"], "no such file") {
+		t.Fatalf("%d %q", code, out)
+	}
+	if _, errs, code := e.run(t, "trust", "--json"); code != 1 || !strings.Contains(errs, "--json") {
+		t.Fatalf("trust --json: %d %s", code, errs)
+	}
+}
+
+func TestQRJSON(t *testing.T) {
+	e := setup(t, true)
+	e.run(t, e.file(t, "notes.md"))
+	out, _, code := e.run(t, "qr", "1", "--json")
+	var m map[string]string
+	if code != 0 || json.Unmarshal([]byte(out), &m) != nil || !strings.Contains(m["url"], "/proj/notes.md") || !strings.ContainsAny(m["qr"], "█▀▄") {
+		t.Fatalf("%d %s", code, out)
+	}
+}
+
+func TestHelpMentionsAgentFlags(t *testing.T) {
+	e := setup(t, false)
+	out, _, _ := e.run(t, "help")
+	for _, want := range []string{"--project", "--notes-dir", "--json", "--qr", "airs notes"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help lacks %q", want)
+		}
 	}
 }

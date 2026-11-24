@@ -23,3 +23,13 @@ func TestPNG(t *testing.T) {
 		t.Fatalf("%v %q", err, b[:8])
 	}
 }
+
+func TestMedium(t *testing.T) {
+	u := "http://192.168.1.20:7777/airreader/2026-11-24-airs-agent-projects-design.md"
+	m, err := Medium(u)
+	var low bytes.Buffer
+	Terminal(&low, u)
+	if err != nil || !strings.ContainsAny(m, "█▀▄") || strings.Count(m, "\n") <= strings.Count(low.String(), "\n") {
+		t.Fatalf("%v\n%s", err, m)
+	}
+}

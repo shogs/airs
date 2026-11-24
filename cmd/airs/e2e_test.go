@@ -76,14 +76,17 @@ func TestEndToEnd(t *testing.T) {
 	if out, code := airs("notes.md"); code != 0 || !strings.Contains(out, "serving notes.md") {
 		t.Fatalf("add: %d %s\nlog: %s", code, out, logTail())
 	}
-	if c := get("/notes.md"); c != 200 {
+	if c := get("/home/notes.md"); c != 200 {
 		t.Fatalf("GET /notes.md %d", c)
 	}
 	e2eNote(t, port, home)
+	if out, code := airs("notes", "notes.md", "--json"); code != 0 || !strings.Contains(out, `"text": "e2e note"`) {
+		t.Fatalf("airs notes: %d %s", code, out)
+	}
 	if out, code := airs("docs"); code != 0 || !strings.Contains(out, "docs/") {
 		t.Fatalf("add folder: %d %s", code, out)
 	}
-	if c := get("/docs/sub/a.md"); c != 200 {
+	if c := get("/home/docs/sub/a.md"); c != 200 {
 		t.Fatalf("GET folder page %d", c)
 	}
 	if out, _ := airs("list"); strings.Count(out, "\n") != 3 {
@@ -118,7 +121,7 @@ func TestEndToEnd(t *testing.T) {
 	if out, code := airs("list"); code != 0 || !strings.Contains(out, "notes.md") {
 		t.Fatalf("after kill -9: %d %s\nlog: %s", code, out, logTail())
 	}
-	if c := get("/notes.md"); c != 200 {
+	if c := get("/home/notes.md"); c != 200 {
 		t.Fatalf("GET after restart %d", c)
 	}
 	if _, code := airs("stop"); code != 0 {
@@ -142,7 +145,7 @@ func TestEndToEnd(t *testing.T) {
 		if out, code := airs("list"); code != 0 || !strings.Contains(out, "notes.md") {
 			t.Fatalf("list right after stop (%d): %d %s\nlog: %s", i, code, out, logTail())
 		}
-		if c := get("/notes.md"); c != 200 {
+		if c := get("/home/notes.md"); c != 200 {
 			t.Fatalf("GET right after stop+list (%d): %d\nlog: %s", i, c, logTail())
 		}
 	}
@@ -213,7 +216,7 @@ func envValue(env []string, k string) string {
 func e2eNote(t *testing.T, port int, home string) {
 	t.Helper()
 	base := fmt.Sprintf("http://127.0.0.1:%d", port)
-	resp, err := http.Get(base + "/notes.md")
+	resp, err := http.Get(base + "/home/notes.md")
 	if err != nil {
 		t.Fatal(err)
 	}

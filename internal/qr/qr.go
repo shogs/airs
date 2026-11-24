@@ -21,3 +21,13 @@ func Terminal(w io.Writer, url string) error {
 func PNG(url string, size int) ([]byte, error) {
 	return qrcode.Encode(url, qrcode.Low, size)
 }
+
+// Medium renders url as half-block text with medium error correction, so it
+// still scans when an agent repeating it gets a character or two wrong.
+func Medium(url string) (string, error) {
+	q, err := qrcode.New(url, qrcode.Medium)
+	if err != nil {
+		return "", err
+	}
+	return q.ToSmallString(false), nil
+}
