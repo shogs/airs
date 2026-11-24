@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"airs/internal/project"
 )
 
 // ErrNotFound is returned when no item matches a query.
@@ -36,10 +38,20 @@ type Item struct {
 	AnyNetwork bool   `json:"any_network"`
 	NoNotes    bool   `json:"no_notes,omitempty"`
 	Slug       string `json:"slug"`
+	Project    string `json:"project"`
+	NotesDir   string `json:"notes_dir,omitempty"` // file items: notes kept here instead of beside the file
 }
 
 // Flags are the per-item options set when adding.
-type Flags struct{ AnyNetwork, NoNotes bool }
+type Flags struct {
+	AnyNetwork, NoNotes bool
+	// Project is the project of a new item (worked out from its path when
+	// empty). An existing item moves to it only when MoveProject is set.
+	Project     string
+	MoveProject bool
+	// NotesDir, when set, is where a file item's notes are kept.
+	NotesDir string
+}
 
 // Name is the basename, with a trailing slash for folders.
 func (it Item) Name() string {
@@ -50,9 +62,10 @@ func (it Item) Name() string {
 	return n
 }
 
-// Key identifies this exact item (slug + path), so a reused slug gets a new key.
+// Key identifies this exact item (slug, project and path), so a reused link
+// or a move to another project gets a new key.
 func (it Item) Key() string {
-	h := sha256.Sum256([]byte(it.Path))
+	h := sha256.Sum256([]byte(it.Project + "\x00" + it.Path))
 	return fmt.Sprintf("%s-%x", it.Slug, h[:4])
 }
 
@@ -87,7 +100,45 @@ func Open(path string) (*Store, error) {
 	if err := json.Unmarshal(b, &s.d); err != nil {
 		return nil, fmt.Errorf("state %s: %w", path, err)
 	}
+	if s.migrate() {
+		if err := s.save(); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
+}
+
+// pathProject is the project worked out from an item's own path.
+func pathProject(absPath string, isDir bool) string {
+	if isDir {
+		return project.Name(absPath)
+	}
+	return project.Name(filepath.Dir(absPath))
+}
+
+// migrate gives items saved before projects existed a project, then makes
+// slugs unique within each project again (lowest id keeps its slug).
+func (s *Store) migrate() bool {
+	changed := false
+	for i, it := range s.d.Items {
+		if it.Project == "" {
+			s.d.Items[i].Project = pathProject(it.Path, it.IsDir)
+			changed = true
+		}
+	}
+	if !changed {
+		return false
+	}
+	sort.Slice(s.d.Items, func(i, j int) bool { return s.d.Items[i].ID < s.d.Items[j].ID })
+	all := s.d.Items
+	s.d.Items = nil
+	for _, it := range all {
+		if s.slugTaken(it.Project, it.Slug) {
+			it.Slug = s.uniqueSlug(it.Project, filepath.Base(it.Path))
+		}
+		s.d.Items = append(s.d.Items, it)
+	}
+	return true
 }
 
 func (s *Store) save() error {
@@ -123,16 +174,29 @@ func (s *Store) Items() []Item {
 	return out
 }
 
-// Add adds absPath, or returns the existing item (updating AnyNetwork when any is set).
+// Add adds absPath, or returns the existing item with the flags given applied.
 func (s *Store) Add(absPath string, isDir bool, f Flags) (Item, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if f.Project == "" {
+		f.Project = pathProject(absPath, isDir)
+	}
 	for i, it := range s.d.Items {
 		if it.Path == absPath {
 			// Flags given on a re-add are turned on; omitted ones are left alone.
-			if (f.AnyNetwork && !it.AnyNetwork) || (f.NoNotes && !it.NoNotes) {
-				s.d.Items[i].AnyNetwork = it.AnyNetwork || f.AnyNetwork
-				s.d.Items[i].NoNotes = it.NoNotes || f.NoNotes
+			up := it
+			up.AnyNetwork = it.AnyNetwork || f.AnyNetwork
+			up.NoNotes = it.NoNotes || f.NoNotes
+			if f.NotesDir != "" {
+				up.NotesDir = f.NotesDir
+			}
+			if f.MoveProject && f.Project != it.Project {
+				up.Project = f.Project
+				s.d.Items[i].Project = "" // free its old link while picking a new one
+				up.Slug = s.uniqueSlug(up.Project, filepath.Base(absPath))
+			}
+			if up != it {
+				s.d.Items[i] = up
 				if err := s.save(); err != nil {
 					return Item{}, true, err
 				}
@@ -146,23 +210,27 @@ func (s *Store) Add(absPath string, isDir bool, f Flags) (Item, bool, error) {
 			id = it.ID + 1
 		}
 	}
-	it := Item{ID: id, Path: absPath, IsDir: isDir, AnyNetwork: f.AnyNetwork, NoNotes: f.NoNotes, Slug: s.uniqueSlug(filepath.Base(absPath))}
+	it := Item{ID: id, Path: absPath, IsDir: isDir, AnyNetwork: f.AnyNetwork, NoNotes: f.NoNotes,
+		Project: f.Project, NotesDir: f.NotesDir, Slug: s.uniqueSlug(f.Project, filepath.Base(absPath))}
 	s.d.Items = append(s.d.Items, it)
 	return it, false, s.save()
 }
 
-func (s *Store) uniqueSlug(base string) string {
-	taken := func(c string) bool {
-		if c == ReservedSlug {
+func (s *Store) slugTaken(proj, c string) bool {
+	if c == ReservedSlug {
+		return true
+	}
+	for _, it := range s.d.Items {
+		if it.Project == proj && it.Slug == c {
 			return true
 		}
-		for _, it := range s.d.Items {
-			if it.Slug == c {
-				return true
-			}
-		}
-		return false
 	}
+	return false
+}
+
+// uniqueSlug is base, or base with -2, -3… when another item in proj has it.
+func (s *Store) uniqueSlug(proj, base string) string {
+	taken := func(c string) bool { return s.slugTaken(proj, c) }
 	if !taken(base) {
 		return base
 	}
@@ -179,16 +247,32 @@ func (s *Store) uniqueSlug(base string) string {
 	}
 }
 
-// BySlug finds an item by its URL name.
-func (s *Store) BySlug(slug string) (Item, bool) {
+// ByLink finds an item by its link: project and URL name.
+func (s *Store) ByLink(proj, slug string) (Item, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, it := range s.d.Items {
-		if it.Slug == slug {
+		if it.Project == proj && it.Slug == slug {
 			return it, true
 		}
 	}
 	return Item{}, false
+}
+
+// Containing finds the shared folder that path is inside, and path's
+// slash-separated location within it.
+func (s *Store) Containing(path string) (Item, string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, it := range s.d.Items {
+		if !it.IsDir {
+			continue
+		}
+		if rel, ok := strings.CutPrefix(path, it.Path+string(filepath.Separator)); ok && rel != "" {
+			return it, filepath.ToSlash(rel), true
+		}
+	}
+	return Item{}, "", false
 }
 
 // Find matches query by exact id, then exact path, then basename.

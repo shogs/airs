@@ -2,7 +2,9 @@ package state
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +20,7 @@ func open(t *testing.T) (*Store, string) {
 
 func mustAdd(t *testing.T, s *Store, path string, dir bool) Item {
 	t.Helper()
-	it, _, err := s.Add(path, dir, Flags{})
+	it, _, err := s.Add(path, dir, Flags{Project: "p"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +140,8 @@ func TestSlugs(t *testing.T) {
 	if e := mustAdd(t, s, "/d/README.md", false); e.Slug != "README.md" {
 		t.Fatalf("freed slug not reused: %q", e.Slug)
 	}
-	if got, ok := s.BySlug("README-2.md"); !ok || got.Path != "/b/README.md" {
-		t.Fatalf("BySlug %+v %v", got, ok)
+	if got, ok := s.ByLink("p", "README-2.md"); !ok || got.Path != "/b/README.md" {
+		t.Fatalf("ByLink %+v %v", got, ok)
 	}
 }
 
@@ -171,5 +173,145 @@ func TestAddFlags(t *testing.T) {
 	s2, _ := Open(p)
 	if got := s2.Items()[0]; !got.NoNotes || !got.AnyNetwork {
 		t.Fatalf("not persisted: %+v", got)
+	}
+}
+
+func TestSlugsPerProject(t *testing.T) {
+	s, _ := open(t)
+	a, _, _ := s.Add("/a/x.md", false, Flags{Project: "p"})
+	b, _, _ := s.Add("/b/x.md", false, Flags{Project: "p"})
+	c, _, _ := s.Add("/c/x.md", false, Flags{Project: "q"})
+	if a.Slug != "x.md" || b.Slug != "x-2.md" || c.Slug != "x.md" {
+		t.Fatalf("slugs %q %q %q", a.Slug, b.Slug, c.Slug)
+	}
+}
+
+func TestAddProject(t *testing.T) {
+	s, _ := open(t)
+	it, _, _ := s.Add("/a/x.md", false, Flags{Project: "proj"})
+	if it.Project != "proj" {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestAddWithoutProjectNamesOne(t *testing.T) {
+	s, _ := open(t)
+	it, _, _ := s.Add("/nowhere/folder/x.md", false, Flags{})
+	if it.Project != "folder" {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestReAddKeepsProject(t *testing.T) {
+	s, _ := open(t)
+	s.Add("/a/x.md", false, Flags{Project: "p"})
+	it, existed, _ := s.Add("/a/x.md", false, Flags{Project: "other"})
+	if !existed || it.Project != "p" {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestReAddMovesProject(t *testing.T) {
+	s, p := open(t)
+	s.Add("/b/x.md", false, Flags{Project: "q"})
+	old, _, _ := s.Add("/a/x.md", false, Flags{Project: "p"})
+	it, existed, _ := s.Add("/a/x.md", false, Flags{Project: "q", MoveProject: true})
+	if !existed || it.Project != "q" || it.Slug != "x-2.md" || it.Key() == old.Key() {
+		t.Fatalf("%+v", it)
+	}
+	if _, ok := s.ByLink("p", "x.md"); ok {
+		t.Fatal("old link still found")
+	}
+	s2, _ := Open(p)
+	if got, ok := s2.ByLink("q", "x-2.md"); !ok || got.Path != "/a/x.md" {
+		t.Fatalf("not persisted: %+v", got)
+	}
+}
+
+func TestReAddNotesDir(t *testing.T) {
+	s, _ := open(t)
+	s.Add("/a/x.md", false, Flags{Project: "p"})
+	it, _, _ := s.Add("/a/x.md", false, Flags{NotesDir: "/n"})
+	if it.NotesDir != "/n" {
+		t.Fatalf("%+v", it)
+	}
+	it, _, _ = s.Add("/a/x.md", false, Flags{})
+	if it.NotesDir != "/n" {
+		t.Fatalf("plain re-add cleared NotesDir: %+v", it)
+	}
+}
+
+func TestByLink(t *testing.T) {
+	s, _ := open(t)
+	s.Add("/a/x.md", false, Flags{Project: "p"})
+	if _, ok := s.ByLink("p", "x.md"); !ok {
+		t.Fatal("not found")
+	}
+	if _, ok := s.ByLink("q", "x.md"); ok {
+		t.Fatal("found under the wrong project")
+	}
+}
+
+func TestKeyIncludesProject(t *testing.T) {
+	a := Item{Slug: "x.md", Path: "/a", Project: "p"}
+	b := Item{Slug: "x.md", Path: "/a", Project: "q"}
+	if a.Key() == b.Key() {
+		t.Fatal("same key")
+	}
+}
+
+func TestMigrationAddsProject(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	os.MkdirAll(filepath.Join(repo, ".git"), 0o755)
+	os.MkdirAll(filepath.Join(repo, "docs"), 0o755)
+	os.WriteFile(filepath.Join(repo, "doc.md"), []byte("# d\n"), 0o644)
+	p := filepath.Join(tmp, "state.json")
+	old := `{"items":[
+ {"id":1,"path":"` + filepath.Join(repo, "doc.md") + `","is_dir":false,"any_network":false,"slug":"doc.md"},
+ {"id":2,"path":"` + filepath.Join(repo, "docs") + `","is_dir":true,"any_network":false,"slug":"docs"},
+ {"id":3,"path":"` + filepath.Join(repo, "gone", "doc.md") + `","is_dir":false,"any_network":false,"slug":"doc-2.md"},
+ {"id":4,"path":"` + filepath.Join(repo, "other", "doc.md") + `","is_dir":false,"any_network":false,"slug":"doc.md"}
+],"trusted":[]}`
+	os.WriteFile(p, []byte(old), 0o600)
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := s.Items()
+	for _, it := range items {
+		if it.Project != "repo" {
+			t.Fatalf("item %d project %q", it.ID, it.Project)
+		}
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		if seen[it.Slug] {
+			t.Fatalf("duplicate slug %q", it.Slug)
+		}
+		seen[it.Slug] = true
+	}
+	if items[0].Slug != "doc.md" {
+		t.Fatalf("lowest id should keep its slug: %+v", items[0])
+	}
+	b, _ := os.ReadFile(p)
+	if !strings.Contains(string(b), `"project": "repo"`) {
+		t.Fatalf("not saved: %s", b)
+	}
+}
+
+func TestContaining(t *testing.T) {
+	s, _ := open(t)
+	s.Add("/r/docs", true, Flags{Project: "p"})
+	s.Add("/r/a.md", false, Flags{Project: "p"})
+	it, rel, ok := s.Containing("/r/docs/a/b.md")
+	if !ok || it.Path != "/r/docs" || rel != "a/b.md" {
+		t.Fatalf("%+v %q %v", it, rel, ok)
+	}
+	if _, _, ok := s.Containing("/r/docsx/a.md"); ok {
+		t.Fatal("prefix match")
+	}
+	if _, _, ok := s.Containing("/r/a.md"); ok {
+		t.Fatal("file item counted as a folder")
 	}
 }
